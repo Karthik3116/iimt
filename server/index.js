@@ -361,6 +361,29 @@ app.get('/api/timetable/:section', async (req, res) => {
     }
 });
 
+// --- 6. SELF-PING FEATURE ---
+const PING_URL = "https://iimt-7iy6.onrender.com";
+let pingCount = 0;
+
+const pingServer = async () => {
+    try {
+        let resp = await axios.get(PING_URL);
+        pingCount++;
+        console.log(`[Self-Ping] Ping count: ${pingCount}`);
+        console.log(`[Self-Ping] Ping response: ${resp}`);
+        
+    } catch (error) {
+        console.error(`[Self-Ping Error] Failed to ping ${PING_URL}:`, error.message);
+    }
+};
+
+// 4 minutes converted to milliseconds (4 * 60 * 1000)
+const PING_INTERVAL_MS = 240000; 
+
 // Render assigns the port dynamically using process.env.PORT
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    // Start the interval pinging once the server is actively listening
+    setInterval(pingServer, PING_INTERVAL_MS);
+});
