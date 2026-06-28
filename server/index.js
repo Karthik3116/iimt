@@ -378,7 +378,7 @@ const pingServer = async () => {
 };
 
 // 4 minutes converted to milliseconds (4 * 60 * 1000)
-const PING_INTERVAL_MS = 24000; 
+const PING_INTERVAL_MS = 240000; 
 
 // Render assigns the port dynamically using process.env.PORT
 const PORT = process.env.PORT || 5000;

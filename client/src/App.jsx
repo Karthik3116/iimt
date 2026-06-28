@@ -151,6 +151,22 @@ function App() {
     return `${dayString}, ${formatted}`;
   };
 
+  // CSS injection to handle mobile browser bottom cut-offs
+  const responsiveFixes = `
+    @media (max-width: 768px) {
+      .dashboard-layout {
+        min-height: 100dvh; /* Uses dynamic viewport height to account for mobile toolbars */
+      }
+      .main-content {
+        /* Adds extra padding at the bottom so the last card isn't blocked by the screen edge */
+        padding-bottom: 120px !important; 
+      }
+      .timetable-section {
+        padding-bottom: env(safe-area-inset-bottom, 40px);
+      }
+    }
+  `;
+
   // --- LOGIN SCREEN ---
   if (!user) {
     return (
@@ -176,201 +192,204 @@ function App() {
 
   // --- MAIN DASHBOARD SCREEN ---
   return (
-    <div className="dashboard-layout">
-      <aside className="sidebar">
-        <div className="brand-title">IIM Trichy</div>
-        <div className="brand-subtitle">PGPM Term-I</div>
+    <>
+      <style>{responsiveFixes}</style>
+      <div className="dashboard-layout">
+        <aside className="sidebar">
+          <div className="brand-title">IIM Trichy</div>
+          <div className="brand-subtitle">PGPM Term-I</div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '1rem', marginTop: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-            <img 
-              src={user.picture || getFallbackAvatar(user.name)} 
-              alt="Profile" 
-              onError={(e) => {
-                e.target.onerror = null; // Prevents infinite loop if fallback fails
-                e.target.src = getFallbackAvatar(user.name);
-              }}
-              style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} 
-            />
-            <div style={{ overflow: 'hidden' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user.name}</div>
-            </div>
-        </div>
-
-        <div className="nav-menu">
-          <button 
-            className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`}
-            onClick={() => setActiveTab('timetable')}
-          >
-            <Calendar size={18} />
-            Timetable
-          </button>
-          
-          <button 
-            className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`}
-            onClick={() => setActiveTab('summary')}
-          >
-            <Table2 size={18} />
-            Summary Table
-          </button>
-        </div>
-
-        <div className="section-selector-container">
-          <span className="section-label">Select Section</span>
-          <div className="sec-grid">
-            {SECTIONS.map((sec) => (
-              <button
-                key={sec}
-                className={`section-btn ${section === sec ? 'active' : ''}`}
-                onClick={() => setSection(sec)}
-              >
-                {sec}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '1rem', marginTop: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+              <img 
+                src={user.picture || getFallbackAvatar(user.name)} 
+                alt="Profile" 
+                onError={(e) => {
+                  e.target.onerror = null; // Prevents infinite loop if fallback fails
+                  e.target.src = getFallbackAvatar(user.name);
+                }}
+                style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} 
+              />
+              <div style={{ overflow: 'hidden' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user.name}</div>
+              </div>
           </div>
-        </div>
-        
-        <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {/* NEW: Sync Button */}
+
+          <div className="nav-menu">
             <button 
-                onClick={handleSyncData} 
-                className="nav-btn" 
-                style={{ width: '100%', color: 'var(--text-secondary)' }}
-                disabled={loading}
+              className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`}
+              onClick={() => setActiveTab('timetable')}
             >
-                <RefreshCw size={18} />
-                {loading ? 'Syncing...' : 'Sync Data'}
+              <Calendar size={18} />
+              Timetable
             </button>
             
-            <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}>
-                <LogOut size={18} />
-                Sign Out
+            <button 
+              className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`}
+              onClick={() => setActiveTab('summary')}
+            >
+              <Table2 size={18} />
+              Summary Table
             </button>
-        </div>
-      </aside>
+          </div>
 
-      <main className="main-content">
-        {loading && <div className="loader">Connecting to database...</div>}
-        {error && <div className="empty-state" style={{color: '#eb3223'}}>{error}</div>}
+          <div className="section-selector-container">
+            <span className="section-label">Select Section</span>
+            <div className="sec-grid">
+              {SECTIONS.map((sec) => (
+                <button
+                  key={sec}
+                  className={`section-btn ${section === sec ? 'active' : ''}`}
+                  onClick={() => setSection(sec)}
+                >
+                  {sec}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {/* NEW: Sync Button */}
+              <button 
+                  onClick={handleSyncData} 
+                  className="nav-btn" 
+                  style={{ width: '100%', color: 'var(--text-secondary)' }}
+                  disabled={loading}
+              >
+                  <RefreshCw size={18} />
+                  {loading ? 'Syncing...' : 'Sync Data'}
+              </button>
+              
+              <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}>
+                  <LogOut size={18} />
+                  Sign Out
+              </button>
+          </div>
+        </aside>
 
-        {!loading && !error && (
-          <>
-            {activeTab === 'timetable' && (
-              <>
-                <div className="top-toolbar">
-                  <h2 className="view-title">
-                    {currentDayData 
-                      ? formatHeaderDate(currentDayData.isoDate, currentDayData.day) 
-                      : formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}
-                  </h2>
-                  
-                  <div className="legend">
-                    <div className="legend-item">
-                      <div className="legend-color" style={{ background: 'var(--color-makeup)' }}></div>
-                      Make-up
+        <main className="main-content">
+          {loading && <div className="loader">Connecting to database...</div>}
+          {error && <div className="empty-state" style={{color: '#eb3223'}}>{error}</div>}
+
+          {!loading && !error && (
+            <>
+              {activeTab === 'timetable' && (
+                <>
+                  <div className="top-toolbar">
+                    <h2 className="view-title">
+                      {currentDayData 
+                        ? formatHeaderDate(currentDayData.isoDate, currentDayData.day) 
+                        : formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}
+                    </h2>
+                    
+                    <div className="legend">
+                      <div className="legend-item">
+                        <div className="legend-color" style={{ background: 'var(--color-makeup)' }}></div>
+                        Make-up
+                      </div>
+                      <div className="legend-item">
+                        <div className="legend-color" style={{ background: 'var(--color-cancelled)' }}></div>
+                        Cancelled
+                      </div>
                     </div>
-                    <div className="legend-item">
-                      <div className="legend-color" style={{ background: 'var(--color-cancelled)' }}></div>
-                      Cancelled
+
+                    <div className="date-picker-group">
+                      <button 
+                        onClick={handleResetDate}
+                        className="nav-btn"
+                        style={{ padding: '0.6rem', border: '1px solid var(--border-color)', margin: '0' }}
+                        title="Snap back to Today"
+                      >
+                        <CalendarSync size={18} color="var(--accent-gold)" />
+                      </button>
+                      <input 
+                        type="date" 
+                        className="date-input"
+                        value={selectedDate}
+                        min={minDate}
+                        max={maxDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        disabled={!minDate}
+                      />
                     </div>
                   </div>
 
-                  <div className="date-picker-group">
-                    <button 
-                      onClick={handleResetDate}
-                      className="nav-btn"
-                      style={{ padding: '0.6rem', border: '1px solid var(--border-color)', margin: '0' }}
-                      title="Snap back to Today"
-                    >
-                      <CalendarSync size={18} color="var(--accent-gold)" />
-                    </button>
-                    <input 
-                      type="date" 
-                      className="date-input"
-                      value={selectedDate}
-                      min={minDate}
-                      max={maxDate}
-                      onChange={(e) => setSelectedDate(e.target.value)}
-                      disabled={!minDate}
-                    />
-                  </div>
-                </div>
+                  <section className="timetable-section">
+                    {!currentDayData && selectedDate && (
+                      <div className="empty-state">No classes scheduled for {formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}. Enjoy your day!</div>
+                    )}
 
-                <section className="timetable-section">
-                  {!currentDayData && selectedDate && (
-                    <div className="empty-state">No classes scheduled for {formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}. Enjoy your day!</div>
-                  )}
+                    {currentDayData && currentDayData.classes.map((cls, idx) => {
+                      const cardStyle = cls.color ? {
+                        borderLeftColor: cls.color,
+                        backgroundColor: `${cls.color}10` 
+                      } : {};
 
-                  {currentDayData && currentDayData.classes.map((cls, idx) => {
-                    const cardStyle = cls.color ? {
-                      borderLeftColor: cls.color,
-                      backgroundColor: `${cls.color}10` 
-                    } : {};
-
-                    return (
-                      <div key={idx} className="class-card" style={cardStyle}>
-                        {cls.status && (
-                          <div className="status-pill" style={{ backgroundColor: cls.color }}>
-                            {cls.status}
-                          </div>
-                        )}
-                        <div className="time-badge" style={{ color: cls.color || 'var(--text-secondary)'}}>
-                          {cls.time.includes('Remarks') ? <Info size={18} /> : <Clock size={18} />}
-                          <span>{cls.time}</span>
-                        </div>
-                        <div className="class-details">
-                          <div className="subject-name">{cls.subject}</div>
-                          {cls.prof && (
-                            <div className="prof-badge" style={cls.color ? { color: cls.color, borderColor: `${cls.color}50` } : {}}>
-                              <UserIcon size={14} />
-                              {cls.prof}
+                      return (
+                        <div key={idx} className="class-card" style={cardStyle}>
+                          {cls.status && (
+                            <div className="status-pill" style={{ backgroundColor: cls.color }}>
+                              {cls.status}
                             </div>
                           )}
+                          <div className="time-badge" style={{ color: cls.color || 'var(--text-secondary)'}}>
+                            {cls.time.includes('Remarks') ? <Info size={18} /> : <Clock size={18} />}
+                            <span>{cls.time}</span>
+                          </div>
+                          <div className="class-details">
+                            <div className="subject-name">{cls.subject}</div>
+                            {cls.prof && (
+                              <div className="prof-badge" style={cls.color ? { color: cls.color, borderColor: `${cls.color}50` } : {}}>
+                                <UserIcon size={14} />
+                                {cls.prof}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )
-                  })}
-                </section>
-              </>
-            )}
+                      )
+                    })}
+                  </section>
+                </>
+              )}
 
-            {activeTab === 'summary' && (
-              <>
-                <div className="top-toolbar">
-                  <h2 className="view-title">Section {section} Academic Overview</h2>
-                </div>
+              {activeTab === 'summary' && (
+                <>
+                  <div className="top-toolbar">
+                    <h2 className="view-title">Section {section} Academic Overview</h2>
+                  </div>
 
-                {summaryData.headers.length > 0 ? (
-                  <div className="table-container" style={{ overflowX: 'auto' }}>
-                    <table className="erp-table" style={{ minWidth: '900px' }}>
-                      <thead>
-                        <tr>
-                          {summaryData.headers.map((header, idx) => (
-                            <th key={idx}>{header}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {summaryData.rows.map((row, rowIdx) => (
-                          <tr key={rowIdx}>
-                            {row.map((cell, cellIdx) => (
-                              <td key={cellIdx}>
-                                {cellIdx === 0 ? <strong>{cell}</strong> : cell}
-                              </td>
+                  {summaryData.headers.length > 0 ? (
+                    <div className="table-container" style={{ overflowX: 'auto' }}>
+                      <table className="erp-table" style={{ minWidth: '900px' }}>
+                        <thead>
+                          <tr>
+                            {summaryData.headers.map((header, idx) => (
+                              <th key={idx}>{header}</th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                   <div className="empty-state">No summary data available.</div>
-                )}
-              </>
-            )}
-          </>
-        )}
-      </main>
-    </div>
+                        </thead>
+                        <tbody>
+                          {summaryData.rows.map((row, rowIdx) => (
+                            <tr key={rowIdx}>
+                              {row.map((cell, cellIdx) => (
+                                <td key={cellIdx}>
+                                  {cellIdx === 0 ? <strong>{cell}</strong> : cell}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                     <div className="empty-state">No summary data available.</div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </main>
+      </div>
+    </>
   );
 }
 
