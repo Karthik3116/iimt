@@ -10,7 +10,6 @@ const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com'; 
 
 // Handles dynamic routing for local dev vs Vercel Production
-// Update the fallback string below with your actual deployed Render URL once you have it.
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
 
 function App() {
@@ -151,19 +150,69 @@ function App() {
     return `${dayString}, ${formatted}`;
   };
 
-  // CSS injection to handle mobile browser bottom cut-offs
-  const responsiveFixes = `
+  // CSS injection to handle mobile browser bottom cut-offs AND the new custom satisfying loader
+  const injectedStyles = `
+    /* --- MOBILE RESPONSIVENESS FIXES --- */
     @media (max-width: 768px) {
       .dashboard-layout {
-        min-height: 100dvh; /* Uses dynamic viewport height to account for mobile toolbars */
+        min-height: 100dvh; 
       }
       .main-content {
-        /* Adds extra padding at the bottom so the last card isn't blocked by the screen edge */
         padding-bottom: 120px !important; 
       }
       .timetable-section {
         padding-bottom: env(safe-area-inset-bottom, 40px);
       }
+    }
+
+    /* --- SATISFYING LOADER ANIMATION --- */
+    .satisfying-loader-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 60vh;
+      gap: 1.5rem;
+      width: 100%;
+    }
+    .dot-wave {
+      display: flex;
+      gap: 12px;
+    }
+    .dot-wave .dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background-color: var(--accent-gold, #dba315);
+      animation: smooth-wave 1.4s ease-in-out infinite;
+      box-shadow: 0 4px 10px rgba(219, 163, 21, 0.3);
+    }
+    .dot-wave .dot:nth-child(1) { animation-delay: 0s; }
+    .dot-wave .dot:nth-child(2) { animation-delay: 0.15s; }
+    .dot-wave .dot:nth-child(3) { animation-delay: 0.3s; }
+    
+    @keyframes smooth-wave {
+      0%, 100% { 
+        transform: translateY(0) scale(0.8); 
+        opacity: 0.3; 
+      }
+      50% { 
+        transform: translateY(-14px) scale(1.1); 
+        opacity: 1; 
+      }
+    }
+    
+    .loading-text {
+      color: var(--text-secondary, #888);
+      font-size: 1.05rem;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      animation: pulse-text 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-text {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
     }
   `;
 
@@ -193,7 +242,7 @@ function App() {
   // --- MAIN DASHBOARD SCREEN ---
   return (
     <>
-      <style>{responsiveFixes}</style>
+      <style>{injectedStyles}</style>
       <div className="dashboard-layout">
         <aside className="sidebar">
           <div className="brand-title">IIM Trichy</div>
@@ -204,7 +253,7 @@ function App() {
                 src={user.picture || getFallbackAvatar(user.name)} 
                 alt="Profile" 
                 onError={(e) => {
-                  e.target.onerror = null; // Prevents infinite loop if fallback fails
+                  e.target.onerror = null; 
                   e.target.src = getFallbackAvatar(user.name);
                 }}
                 style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} 
@@ -248,7 +297,6 @@ function App() {
           </div>
           
           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {/* NEW: Sync Button */}
               <button 
                   onClick={handleSyncData} 
                   className="nav-btn" 
@@ -267,7 +315,18 @@ function App() {
         </aside>
 
         <main className="main-content">
-          {loading && <div className="loader">Connecting to database...</div>}
+          {/* SATISFYING LOADER REPLACEMENT */}
+          {loading && (
+            <div className="satisfying-loader-container">
+              <div className="dot-wave">
+                <div className="dot"></div>
+                <div className="dot"></div>
+                <div className="dot"></div>
+              </div>
+              <div className="loading-text">Connecting to database...</div>
+            </div>
+          )}
+
           {error && <div className="empty-state" style={{color: '#eb3223'}}>{error}</div>}
 
           {!loading && !error && (
