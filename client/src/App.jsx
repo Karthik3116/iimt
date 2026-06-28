@@ -9,6 +9,10 @@ const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 // REPLACE THIS STRING WITH YOUR ACTUAL GOOGLE CLIENT ID
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com'; 
 
+// Handles dynamic routing for local dev vs Vercel Production
+// Update the fallback string below with your actual deployed Render URL once you have it.
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
+
 function App() {
   const [user, setUser] = useState(null);
   const [authError, setAuthError] = useState('');
@@ -48,7 +52,7 @@ function App() {
   const handleGoogleSuccess = async (credentialResponse) => {
     try {
       setAuthError('');
-      const res = await axios.post('http://localhost:5000/api/auth/google', {
+      const res = await axios.post(`${API_BASE_URL}/api/auth/google`, {
         token: credentialResponse.credential
       });
       
@@ -103,7 +107,7 @@ function App() {
     setError('');
     
     try {
-      const res = await axios.get(`http://localhost:5000/api/timetable/${sec}`);
+      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}`);
       const data = res.data.timetable;
       const summary = res.data.summary;
       

@@ -10,7 +10,8 @@ app.use(cors());
 app.use(express.json()); 
 
 // --- 1. MONGODB CONNECTION & SCHEMA ---
-const MONGO_URI = "mongodb+srv://karthik3116k:v7lheKf4YxjvStXt@cluster0.edbxe4c.mongodb.net/iimt?retryWrites=true&w=majority&appName=Cluster0";
+// Use environment variable for security in production
+const MONGO_URI = process.env.MONGO_URI;
 
 console.log("Trying to connect with the DB...");
 mongoose.connect(MONGO_URI)
@@ -354,5 +355,6 @@ app.get('/api/timetable/:section', async (req, res) => {
     }
 });
 
-const PORT = 5000;
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+// Render assigns the port dynamically using process.env.PORT
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
