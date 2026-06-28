@@ -370,7 +370,7 @@ const pingServer = async () => {
         let resp = await axios.get(PING_URL);
         pingCount++;
         console.log(`[Self-Ping] Ping count: ${pingCount}`);
-        console.log(`[Self-Ping] Ping response: ${resp}`);
+        console.log(`[Self-Ping] Ping response: ${resp.data}`);
         
     } catch (error) {
         console.error(`[Self-Ping Error] Failed to ping ${PING_URL}:`, error.message);
@@ -378,7 +378,7 @@ const pingServer = async () => {
 };
 
 // 4 minutes converted to milliseconds (4 * 60 * 1000)
-const PING_INTERVAL_MS = 240000; 
+const PING_INTERVAL_MS = 24000; 
 
 // Render assigns the port dynamically using process.env.PORT
 const PORT = process.env.PORT || 5000;
