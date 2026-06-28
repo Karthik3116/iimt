@@ -33,6 +33,11 @@ const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.goog
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // --- 3. AUTHENTICATION ROUTE ---
+
+app.get("/" , async (req , res) => {
+    return res.json("working bruhh!!!!")
+});
+
 app.post('/api/auth/google', async (req, res) => {
     const { token } = req.body;
     try {
