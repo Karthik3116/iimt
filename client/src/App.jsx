@@ -10,8 +10,8 @@ const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
 // Handles dynamic routing for local dev vs Vercel Production
-// const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
-const API_BASE_URL = "http://localhost:5000"
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
+// const API_BASE_URL = "http://localhost:5000"
 
 // Minimum horizontal finger travel (px) before a touch gesture counts as a swipe
 const SWIPE_THRESHOLD = 50;
