@@ -113,7 +113,7 @@ function App() {
     setError('');
 
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}`);
+      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceSync}`);
       const data = res.data.timetable;
       const summary = res.data.summary;
 
