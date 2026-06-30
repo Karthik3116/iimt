@@ -8,10 +8,9 @@ const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 app.use(cors());
-app.use(express.json()); 
+app.use(express.json());
 
 // --- 1. MONGODB CONNECTION & SCHEMA ---
-// Use environment variable for security in production
 const MONGO_URI = process.env.MONGO_URI;
 
 console.log("Trying to connect with the DB...");
@@ -29,12 +28,12 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 // --- 2. GOOGLE AUTH SETUP ---
-const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com'; 
+const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // --- 3. AUTHENTICATION ROUTE ---
 
-app.get("/" , async (req , res) => {
+app.get("/", async (req, res) => {
     return res.json("working bruhh!!!!")
 });
 
@@ -73,7 +72,7 @@ const getCellText = (cell) => {
     if (!cell || cell.value === null || cell.value === undefined) return '';
     if (typeof cell.value === 'object') {
         if (cell.type === ExcelJS.ValueType.Date || cell.value instanceof Date) {
-            return cell.value.toISOString(); 
+            return cell.value.toISOString();
         }
         if (cell.value.richText) {
             return cell.value.richText.map(rt => rt.text).join('');
@@ -109,61 +108,75 @@ const getCellColor = (cell) => {
     return null;
 };
 
+// Converts a column letter string (e.g. "AA") to its 1-based column number (e.g. 27)
+const colLetterToNumber = (letters) => {
+    let col = 0;
+    for (let i = 0; i < letters.length; i++) {
+        col = col * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return col;
+};
+
+// Parses an ExcelJS merge range string like "T1:AA1" into numeric boundaries
+const parseMergeRange = (rangeStr) => {
+    const [start, end] = rangeStr.split(':');
+    const m1 = start.match(/^([A-Z]+)(\d+)$/);
+    const m2 = (end || start).match(/^([A-Z]+)(\d+)$/);
+    if (!m1 || !m2) return null;
+    return {
+        startCol: colLetterToNumber(m1[1]),
+        startRow: parseInt(m1[2], 10),
+        endCol: colLetterToNumber(m2[1]),
+        endRow: parseInt(m2[2], 10),
+    };
+};
+
 // --- 5. TIMETABLE API ---
 app.get('/api/timetable/:section', async (req, res) => {
     try {
         const { section } = req.params;
         const response = await axios.get(SHEET_URL, { responseType: 'arraybuffer' });
-        
+
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(response.data);
-        
+
         let targetCol = null;
+        let sectionEndCol = null;
         let targetSheet = null;
         let headerRowIdx = -1;
 
-        // TWO-PASS ROBUST SCANNER
-        for (const sheet of workbook.worksheets) {
-            
-            // Pass 1: Explicit Section Title Targeting (Overcomes merged/crammed cells)
-            sheet.eachRow((row, rowNum) => {
-                if (targetCol) return;
-                row.eachCell((cell, colNum) => {
-                    if (targetCol) return;
-                    const text = getCellText(cell).toUpperCase().replace(/\s+/g, ' ');
-                    const secRegex = new RegExp(`SECTION\\s*[-|]?\\s*${section.toUpperCase()}\\b`);
-                    
-                    if (secRegex.test(text)) {
-                        targetSheet = sheet;
-                        // Is "Day and Date" jammed in the exact same cell?
-                        if (text.includes('DAY AND DATE') || text.includes('DAY & DATE')) {
-                            targetCol = colNum;
-                            headerRowIdx = rowNum;
-                        } else {
-                            // Search the immediate rows below for the header
-                            for (let r = rowNum; r <= Math.min(rowNum + 5, sheet.rowCount); r++) {
-                                const sRow = sheet.getRow(r);
-                                if (!sRow) continue;
-                                for (let c = Math.max(1, colNum - 2); c <= colNum + 5; c++) {
-                                    const sText = getCellText(sRow.getCell(c)).toUpperCase().replace(/\s+/g, ' ');
-                                    if (sText.includes('DAY AND DATE') || sText.includes('DAY & DATE')) {
-                                        targetCol = c;
-                                        headerRowIdx = r;
-                                        break;
-                                    }
-                                }
-                                if (targetCol) break;
-                            }
-                        }
-                    }
-                });
-            });
+        const secRegex = new RegExp(`SECTION\\s*[-|]?\\s*${section.toUpperCase()}\\b`);
 
-            // Pass 2: Sequential Fallback (If Section Titles were deleted/missing)
-            if (!targetCol) {
+        // ---- PASS 1: MERGE-RANGE BASED DETECTION (robust, primary method) ----
+        // Each section's title is merged across exactly the columns that belong to
+        // that section (e.g. "T1:AA1" for Section C). Reading this directly avoids
+        // guessing where a section's data block ends, which is what caused data
+        // from the *next* section to bleed into the current one previously.
+        for (const sheet of workbook.worksheets) {
+            const merges = (sheet.model && sheet.model.merges) || [];
+            for (const rangeStr of merges) {
+                const range = parseMergeRange(rangeStr);
+                if (!range || range.startRow !== 1) continue;
+
+                const titleCell = sheet.getCell(range.startRow, range.startCol);
+                const text = getCellText(titleCell).toUpperCase().replace(/\s+/g, ' ');
+
+                if (secRegex.test(text)) {
+                    targetSheet = sheet;
+                    targetCol = range.startCol;
+                    sectionEndCol = range.endCol;
+                    break;
+                }
+            }
+            if (targetCol) break;
+        }
+
+        // ---- PASS 2: SEQUENTIAL FALLBACK (if no merge/title match was found) ----
+        if (!targetCol) {
+            for (const sheet of workbook.worksheets) {
                 let sheetHeaderRowIdx = -1;
                 let dayDateCols = [];
-                
+
                 sheet.eachRow((row, rowNumber) => {
                     if (sheetHeaderRowIdx !== -1 && rowNumber > sheetHeaderRowIdx) return;
                     row.eachCell((cell, colNumber) => {
@@ -177,60 +190,78 @@ app.get('/api/timetable/:section', async (req, res) => {
 
                 if (sheetHeaderRowIdx !== -1 && dayDateCols.length > 0) {
                     dayDateCols.sort((a, b) => a - b);
-                    const secIdx = section.toUpperCase().charCodeAt(0) - 65; 
+                    const secIdx = section.toUpperCase().charCodeAt(0) - 65;
                     if (secIdx >= 0 && secIdx < dayDateCols.length) {
                         targetCol = dayDateCols[secIdx];
+                        // Best-effort end boundary: just before the next section's
+                        // "Day and Date" column, or +9 columns if it's the last one.
+                        sectionEndCol = secIdx + 1 < dayDateCols.length
+                            ? dayDateCols[secIdx + 1] - 1
+                            : targetCol + 9;
                         targetSheet = sheet;
                         headerRowIdx = sheetHeaderRowIdx;
+                        break;
                     }
                 }
             }
-            if (targetCol) break; 
         }
 
         if (!targetCol || !targetSheet) return res.status(404).json({ error: `Section ${section} not found in ERP data.` });
         const sheet = targetSheet;
 
-        // Find the exact row containing Time Slots dynamically
+        // ---- Locate the header row (where "Day and Date" / "Day" labels live) ----
+        // Some sections (e.g. Section D in the source sheet) don't actually have
+        // these labels in row 2 — that's fine, we already know the columns from the
+        // merge range. We just need *a* row to anchor the search, defaulting to 2.
+        if (headerRowIdx === -1) {
+            headerRowIdx = 2;
+            for (let r = 1; r <= 6; r++) {
+                const row = sheet.getRow(r);
+                let found = false;
+                for (let c = targetCol; c <= sectionEndCol; c++) {
+                    const text = getCellText(row.getCell(c)).toUpperCase().replace(/\s+/g, ' ');
+                    if (text.includes('DAY AND DATE') || text.includes('DAY & DATE')) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    headerRowIdx = r;
+                    break;
+                }
+            }
+        }
+
+        // ---- Locate the time-slot header row (e.g. "08:30 am to 10:00 am") ----
+        // Bounded strictly within [targetCol, sectionEndCol] so it can never read
+        // into a neighboring section's columns.
         let timeHeaderRowIdx = headerRowIdx;
-        const r1 = sheet.getRow(headerRowIdx);
-        const r2 = sheet.getRow(headerRowIdx + 1);
-        const r3 = sheet.getRow(headerRowIdx + 2);
-        
         const countTimes = (r) => {
             if (!r) return 0;
             let count = 0;
-            for(let c = targetCol + 1; c <= targetCol + 10; c++) {
+            for (let c = targetCol + 1; c <= sectionEndCol; c++) {
                 const txt = getCellText(r.getCell(c)).toLowerCase();
-                if (txt.includes('am') || txt.includes('pm') || txt.includes(':00') || txt.includes(':30')) count++;
+                if (txt.includes('am') || txt.includes('pm') || /\d{1,2}:\d{2}/.test(txt)) count++;
             }
             return count;
         };
+
+        const r1 = sheet.getRow(headerRowIdx);
+        const r2 = sheet.getRow(headerRowIdx + 1);
+        const r3 = sheet.getRow(headerRowIdx + 2);
 
         if (countTimes(r1) < 2) {
             if (countTimes(r2) >= 2) timeHeaderRowIdx = headerRowIdx + 1;
             else if (countTimes(r3) >= 2) timeHeaderRowIdx = headerRowIdx + 2;
         }
 
-        // Calculate Column Span Safely
-        let colsSpan = 1;
-        for (let c = targetCol + 1; c <= sheet.columnCount; c++) {
-            const hText = getCellText(sheet.getCell(headerRowIdx, c)).toUpperCase().replace(/\s+/g, ' ');
-            const tText = getCellText(sheet.getCell(timeHeaderRowIdx, c)).toUpperCase().replace(/\s+/g, ' ');
-            
-            // Stop parsing if we bleed into the next section
-            if (hText.includes('DAY AND DATE') || hText.includes('DAY & DATE') || 
-                tText.includes('DAY AND DATE') || tText.includes('DAY & DATE')) {
-                break;
-            }
-            colsSpan++;
-            if (colsSpan > 12) break; // Hard limit safeguard
-        }
+        // ---- Column span comes directly from the merge range — no guessing ----
+        const colsSpan = sectionEndCol - targetCol + 1;
 
         const timeHeaders = [];
         for (let c = 0; c < colsSpan; c++) {
             let th = getCellText(sheet.getCell(timeHeaderRowIdx, targetCol + c));
-            if (!th) th = getCellText(sheet.getCell(headerRowIdx, targetCol + c)); 
+            if (!th) th = getCellText(sheet.getCell(headerRowIdx, targetCol + c));
             timeHeaders.push(th);
         }
 
@@ -245,7 +276,7 @@ app.get('/api/timetable/:section', async (req, res) => {
                 const c1 = getCellText(row.getCell(1)).toLowerCase();
                 const c2 = getCellText(row.getCell(2)).toLowerCase();
                 const t1 = getCellText(row.getCell(targetCol)).toLowerCase();
-                
+
                 if (c1.includes('sessions') || c2.includes('credits') || c1 === '20' || c1.includes('actual teaching') ||
                     t1.includes('sessions') || t1.includes('credits') || t1 === '20' || t1.includes('actual teaching')) {
                     summaryStartIndex = rowNumber;
@@ -254,7 +285,7 @@ app.get('/api/timetable/:section', async (req, res) => {
 
             if (summaryStartIndex === -1) {
                 const dateStr = getCellText(row.getCell(targetCol)).trim();
-                if (!dateStr) return; 
+                if (!dateStr) return;
 
                 let isoDate = null;
                 let dayStrParsed = '';
@@ -266,7 +297,7 @@ app.get('/api/timetable/:section', async (req, res) => {
 
                 if (yearMatch && dayExtract && monthExtract) {
                     const dd = dayExtract[1].padStart(2, '0');
-                    const monthMap = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+                    const monthMap = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
                     const mm = monthMap[monthExtract[1].toLowerCase()];
                     const yyyy = yearMatch[1];
                     isoDate = `${yyyy}-${mm}-${dd}`;
@@ -345,7 +376,7 @@ app.get('/api/timetable/:section', async (req, res) => {
                         const postMid = getCellText(row.getCell(actualTeachingCol + 2));
                         const guestSpeaker = getCellText(row.getCell(actualTeachingCol + 3));
                         const total = getCellText(row.getCell(actualTeachingCol + 4));
-                        
+
                         if (subject && subject.trim() !== '' && !subject.toLowerCase().includes('class cancelled') && !subject.toLowerCase().includes('make up session')) {
                             summaryData.rows.push([subject, credits, sessions, actualTeaching, preMid, postMid, guestSpeaker, total]);
                         }
@@ -371,14 +402,14 @@ const pingServer = async () => {
         pingCount++;
         console.log(`[Self-Ping] Ping count: ${pingCount}`);
         console.log(`[Self-Ping] Ping response: ${resp.data}`);
-        
+
     } catch (error) {
         console.error(`[Self-Ping Error] Failed to ping ${PING_URL}:`, error.message);
     }
 };
 
 // 4 minutes converted to milliseconds (4 * 60 * 1000)
-const PING_INTERVAL_MS = 240000; 
+const PING_INTERVAL_MS = 240000;
 
 // Render assigns the port dynamically using process.env.PORT
 const PORT = process.env.PORT || 5000;

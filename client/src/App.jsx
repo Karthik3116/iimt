@@ -7,10 +7,11 @@ import './App.css';
 const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
 // REPLACE THIS STRING WITH YOUR ACTUAL GOOGLE CLIENT ID
-const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com'; 
+const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
 // Handles dynamic routing for local dev vs Vercel Production
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
+// const API_BASE_URL = "http://localhost:5000"
 
 function App() {
   const [user, setUser] = useState(null);
@@ -18,17 +19,17 @@ function App() {
 
   const [activeTab, setActiveTab] = useState('timetable');
   const [section, setSection] = useState('A');
-  
-  // NEW: State object to cache downloaded sections
-  const [cache, setCache] = useState({}); 
-  
+
+  // State object to cache downloaded sections
+  const [cache, setCache] = useState({});
+
   const [scheduleData, setScheduleData] = useState([]);
   const [summaryData, setSummaryData] = useState({ headers: [], rows: [] });
-  
+
   const [selectedDate, setSelectedDate] = useState('');
   const [minDate, setMinDate] = useState('');
   const [maxDate, setMaxDate] = useState('');
-  
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -46,6 +47,7 @@ function App() {
   // Triggers whenever the selected section changes
   useEffect(() => {
     if (user) fetchTimetable(section);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, user]);
 
   const handleGoogleSuccess = async (credentialResponse) => {
@@ -54,7 +56,7 @@ function App() {
       const res = await axios.post(`${API_BASE_URL}/api/auth/google`, {
         token: credentialResponse.credential
       });
-      
+
       const loggedInUser = res.data.user;
       setUser(loggedInUser);
       localStorage.setItem('iimt_user', JSON.stringify(loggedInUser));
@@ -74,7 +76,7 @@ function App() {
   const applyDateLogic = (data) => {
     const validDates = data.map(d => d.isoDate).filter(Boolean);
     if (validDates.length > 0) {
-      validDates.sort(); 
+      validDates.sort();
       let min = validDates[0];
       let max = validDates[validDates.length - 1];
       const todayIST = getTodayIST();
@@ -92,7 +94,7 @@ function App() {
     }
   };
 
-  // UPDATED: Now supports local caching and a forceSync override
+  // Supports local caching and a forceSync override
   const fetchTimetable = async (sec, forceSync = false) => {
     // If not forcing a sync and we already have the data in cache, load instantly
     if (!forceSync && cache[sec]) {
@@ -104,17 +106,17 @@ function App() {
 
     setLoading(true);
     setError('');
-    
+
     try {
       const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}`);
       const data = res.data.timetable;
       const summary = res.data.summary;
-      
+
       // Update UI state
       setScheduleData(data);
       setSummaryData(summary);
       applyDateLogic(data);
-      
+
       // Update local cache object
       setCache(prevCache => ({
         ...prevCache,
@@ -132,7 +134,7 @@ function App() {
   // Manual Sync Button Handler
   const handleSyncData = () => {
     // Clears the entire cache object so everything forces a re-download next time a tab is clicked
-    setCache({}); 
+    setCache({});
     // Force refresh the current viewing tab immediately
     fetchTimetable(section, true);
   };
@@ -150,15 +152,15 @@ function App() {
     return `${dayString}, ${formatted}`;
   };
 
-  // CSS injection to handle mobile browser bottom cut-offs AND the new custom satisfying loader
+  // CSS injection to handle mobile browser bottom cut-offs AND the custom loader
   const injectedStyles = `
     /* --- MOBILE RESPONSIVENESS FIXES --- */
     @media (max-width: 768px) {
       .dashboard-layout {
-        min-height: 100dvh; 
+        min-height: 100dvh;
       }
       .main-content {
-        padding-bottom: 120px !important; 
+        padding-bottom: 120px !important;
       }
       .timetable-section {
         padding-bottom: env(safe-area-inset-bottom, 40px);
@@ -190,18 +192,18 @@ function App() {
     .dot-wave .dot:nth-child(1) { animation-delay: 0s; }
     .dot-wave .dot:nth-child(2) { animation-delay: 0.15s; }
     .dot-wave .dot:nth-child(3) { animation-delay: 0.3s; }
-    
+
     @keyframes smooth-wave {
-      0%, 100% { 
-        transform: translateY(0) scale(0.8); 
-        opacity: 0.3; 
+      0%, 100% {
+        transform: translateY(0) scale(0.8);
+        opacity: 0.3;
       }
-      50% { 
-        transform: translateY(-14px) scale(1.1); 
-        opacity: 1; 
+      50% {
+        transform: translateY(-14px) scale(1.1);
+        opacity: 1;
       }
     }
-    
+
     .loading-text {
       color: var(--text-secondary, #888);
       font-size: 1.05rem;
@@ -224,13 +226,13 @@ function App() {
           <div className="login-card" style={{ padding: '3rem', background: '#fff', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', textAlign: 'center', minWidth: '320px' }}>
             <h1 style={{ color: 'var(--accent-gold)', marginBottom: '0.5rem' }}>IIM Trichy</h1>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>PGPM Term-I Portal</p>
-            
+
             <GoogleLogin
               onSuccess={handleGoogleSuccess}
               onError={() => setAuthError('Google Login Failed')}
               useOneTap
             />
-            
+
             {authError && <div style={{ color: 'var(--color-cancelled)', marginTop: '1rem', fontSize: '0.9rem', fontWeight: 'bold' }}>{authError}</div>}
             <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>*Requires @iimtrichy.ac.in email address</p>
           </div>
@@ -249,14 +251,14 @@ function App() {
           <div className="brand-subtitle">PGPM Term-I</div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '1rem', marginTop: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-              <img 
-                src={user.picture || getFallbackAvatar(user.name)} 
-                alt="Profile" 
+              <img
+                src={user.picture || getFallbackAvatar(user.name)}
+                alt="Profile"
                 onError={(e) => {
-                  e.target.onerror = null; 
+                  e.target.onerror = null;
                   e.target.src = getFallbackAvatar(user.name);
                 }}
-                style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} 
+                style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }}
               />
               <div style={{ overflow: 'hidden' }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user.name}</div>
@@ -264,15 +266,15 @@ function App() {
           </div>
 
           <div className="nav-menu">
-            <button 
+            <button
               className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`}
               onClick={() => setActiveTab('timetable')}
             >
               <Calendar size={18} />
               Timetable
             </button>
-            
-            <button 
+
+            <button
               className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`}
               onClick={() => setActiveTab('summary')}
             >
@@ -295,18 +297,18 @@ function App() {
               ))}
             </div>
           </div>
-          
+
           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button 
-                  onClick={handleSyncData} 
-                  className="nav-btn" 
+              <button
+                  onClick={handleSyncData}
+                  className="nav-btn"
                   style={{ width: '100%', color: 'var(--text-secondary)' }}
                   disabled={loading}
               >
                   <RefreshCw size={18} />
                   {loading ? 'Syncing...' : 'Sync Data'}
               </button>
-              
+
               <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}>
                   <LogOut size={18} />
                   Sign Out
@@ -315,7 +317,7 @@ function App() {
         </aside>
 
         <main className="main-content">
-          {/* SATISFYING LOADER REPLACEMENT */}
+          {/* SATISFYING LOADER */}
           {loading && (
             <div className="satisfying-loader-container">
               <div className="dot-wave">
@@ -335,11 +337,11 @@ function App() {
                 <>
                   <div className="top-toolbar">
                     <h2 className="view-title">
-                      {currentDayData 
-                        ? formatHeaderDate(currentDayData.isoDate, currentDayData.day) 
+                      {currentDayData
+                        ? formatHeaderDate(currentDayData.isoDate, currentDayData.day)
                         : formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}
                     </h2>
-                    
+
                     <div className="legend">
                       <div className="legend-item">
                         <div className="legend-color" style={{ background: 'var(--color-makeup)' }}></div>
@@ -352,7 +354,7 @@ function App() {
                     </div>
 
                     <div className="date-picker-group">
-                      <button 
+                      <button
                         onClick={handleResetDate}
                         className="nav-btn"
                         style={{ padding: '0.6rem', border: '1px solid var(--border-color)', margin: '0' }}
@@ -360,8 +362,8 @@ function App() {
                       >
                         <CalendarSync size={18} color="var(--accent-gold)" />
                       </button>
-                      <input 
-                        type="date" 
+                      <input
+                        type="date"
                         className="date-input"
                         value={selectedDate}
                         min={minDate}
@@ -380,7 +382,7 @@ function App() {
                     {currentDayData && currentDayData.classes.map((cls, idx) => {
                       const cardStyle = cls.color ? {
                         borderLeftColor: cls.color,
-                        backgroundColor: `${cls.color}10` 
+                        backgroundColor: `${cls.color}10`
                       } : {};
 
                       return (
