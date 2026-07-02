@@ -10,6 +10,7 @@ const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
+// const API_BASE_URL = "http://localhost:5000"
 
 const SWIPE_THRESHOLD = 40;
 const SWIPE_HINT_MAX_SHOWS = 3;
@@ -51,6 +52,7 @@ function App() {
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const getTodayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -68,11 +70,8 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, user]);
 
-  // --- FIX: SILENT BACKGROUND REFRESH ---
   useEffect(() => {
     const handleVisibilityChange = () => {
-      // When the app comes back to the foreground, silently fetch from the backend's
-      // fast 5-minute memory cache without forcing a heavy Excel sync or showing loaders.
       if (document.visibilityState === 'visible' && user) {
         fetchTimetable(section, false, true); 
       }
@@ -81,7 +80,6 @@ function App() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [user, section]);
 
-  // Show tutorial
   useEffect(() => {
     if (!user || hintHandledThisSession.current) return;
     hintHandledThisSession.current = true;
@@ -118,7 +116,11 @@ function App() {
       setUser(loggedInUser);
       localStorage.setItem('iimt_user', JSON.stringify(loggedInUser));
     } catch (err) {
-      setAuthError(err.response?.data?.error || 'Authentication failed. Please try again.');
+      if (err.response?.status === 429) {
+        setAuthError(err.response.data.error || 'Too many attempts. Try again later.');
+      } else {
+        setAuthError(err.response?.data?.error || 'Authentication failed. Please try again.');
+      }
     }
   };
 
@@ -151,7 +153,6 @@ function App() {
   };
 
   const fetchTimetable = async (sec, forceBackendSync = false, isBackgroundRefresh = false) => {
-    // If it's not a forced sync and not a background refresh, use fast local React state cache
     if (!forceBackendSync && !isBackgroundRefresh && cache[sec]) {
       setScheduleData(cache[sec].timetable);
       setSummaryData(cache[sec].summary);
@@ -159,7 +160,6 @@ function App() {
       return;
     }
 
-    // Only show full-screen loader if it's NOT a background refresh
     if (!isBackgroundRefresh) {
       setLoading(true);
       setError('');
@@ -173,7 +173,6 @@ function App() {
       setScheduleData(data);
       setSummaryData(summary);
       
-      // Prevent snapping the user's selected date back to today if they are mid-browse
       if (!isBackgroundRefresh) {
         applyDateLogic(data);
       }
@@ -184,7 +183,11 @@ function App() {
       }));
     } catch (err) {
       console.error(err);
-      if (!isBackgroundRefresh) setError('System Error: Unable to fetch ERP data.');
+      if (err.response?.status === 429) {
+          if (!isBackgroundRefresh) setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
+      } else {
+          if (!isBackgroundRefresh) setError('System Error: Unable to fetch ERP data.');
+      }
     } finally {
       if (!isBackgroundRefresh) setLoading(false);
     }
@@ -192,7 +195,7 @@ function App() {
 
   const handleSyncData = () => {
     setCache({});
-    fetchTimetable(section, true, false); // Force heavy sync on manual button press
+    fetchTimetable(section, true, false); 
   };
 
   const handleResetDate = () => {
@@ -202,6 +205,7 @@ function App() {
 
   const submitFeedback = async () => {
     if (!feedbackText.trim()) return;
+    setIsSubmitting(true);
     setFeedbackStatus('Sending...');
     try {
       await axios.post(`${API_BASE_URL}/api/feedback`, {
@@ -214,9 +218,15 @@ function App() {
         setShowFeedbackModal(false);
         setFeedbackText('');
         setFeedbackStatus('');
+        setIsSubmitting(false);
       }, 2000);
     } catch (error) {
-      setFeedbackStatus('Failed to send.');
+      setIsSubmitting(false);
+      if (error.response?.status === 429) {
+          setFeedbackStatus('Rate limited. Please wait.');
+      } else {
+          setFeedbackStatus('Failed to send.');
+      }
     }
   };
 
@@ -228,7 +238,6 @@ function App() {
     return `${dayString}, ${formatted}`;
   };
 
-  // --- SWIPE GESTURE HANDLERS ---
   const shiftIsoDate = (isoDate, days) => {
     const d = new Date(`${isoDate}T00:00:00`);
     d.setDate(d.getDate() + days);
@@ -334,7 +343,9 @@ function App() {
     .modal-content textarea { width: 100%; height: 100px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: inherit; resize: none; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .btn-submit { background: var(--accent-gold); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    .btn-submit:disabled { background: #d0b875; cursor: not-allowed; }
     .btn-cancel { background: #eee; color: #333; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    .btn-cancel:disabled { background: #f5f5f5; color: #999; cursor: not-allowed; }
 
     /* --- ADMIN PORTAL --- */
     .admin-container { padding: 2rem; max-width: 800px; margin: 0 auto; font-family: sans-serif; }
@@ -344,12 +355,10 @@ function App() {
     .feedback-card { background: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--accent-gold); }
   `;
 
-  // --- SIMPLE ROUTER FOR ADMIN PORTAL ---
   if (window.location.pathname === '/admin') {
     return <AdminPortal injectedStyles={injectedStyles} />;
   }
 
-  // --- LOGIN SCREEN ---
   if (!user) {
     return (
       <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
@@ -376,26 +385,27 @@ function App() {
     transition: isDragging ? 'none' : 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
   };
 
-  // --- MAIN DASHBOARD SCREEN ---
   return (
     <>
       <style>{injectedStyles}</style>
 
       {/* FEEDBACK MODAL */}
       {showFeedbackModal && (
-        <div className="modal-overlay" onClick={() => setShowFeedbackModal(false)}>
+        <div className="modal-overlay" onClick={() => !isSubmitting && setShowFeedbackModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0 }}>Submit Feedback</h3>
             <p style={{ fontSize: '0.9rem', color: '#666', margin: 0 }}>Report an issue or suggest a feature.</p>
             <textarea 
-              placeholder="Type your message here..."
+              placeholder="Type your message here... (max 1000 chars)"
+              maxLength={1000}
               value={feedbackText}
               onChange={e => setFeedbackText(e.target.value)}
+              disabled={isSubmitting}
             />
             {feedbackStatus && <div style={{fontSize: '0.85rem', color: 'var(--accent-gold)'}}>{feedbackStatus}</div>}
             <div className="modal-actions">
-              <button className="btn-cancel" onClick={() => setShowFeedbackModal(false)}>Cancel</button>
-              <button className="btn-submit" onClick={submitFeedback}>Submit</button>
+              <button className="btn-cancel" disabled={isSubmitting} onClick={() => setShowFeedbackModal(false)}>Cancel</button>
+              <button className="btn-submit" disabled={isSubmitting || !feedbackText.trim()} onClick={submitFeedback}>Submit</button>
             </div>
           </div>
         </div>
@@ -454,7 +464,6 @@ function App() {
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {/* FEEDBACK BUTTON */}
               <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}>
                   <MessageSquare size={18} /> Provide Feedback
               </button>
@@ -585,7 +594,7 @@ function App() {
                       </table>
                     </div>
                   ) : (
-                     <div className="empty-state">No summary data available.</div>
+                      <div className="empty-state">No summary data available.</div>
                   )}
                 </>
               )}
@@ -603,16 +612,24 @@ function AdminPortal({ injectedStyles }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [feedbacks, setFeedbacks] = useState([]);
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setIsLoading(true);
     try {
       const res = await axios.post(`${API_BASE_URL}/api/admin/feedbacks`, { password });
       setFeedbacks(res.data.feedbacks);
       setAuthenticated(true);
       setError('');
     } catch (err) {
-      setError('Invalid Password');
+      if (err.response?.status === 429) {
+          setError('Rate limit exceeded. Please wait before trying again.');
+      } else {
+          setError('Invalid Password');
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -625,8 +642,8 @@ function AdminPortal({ injectedStyles }) {
             <Lock size={48} color="var(--accent-gold)" style={{marginBottom: '1rem'}} />
             <h2>Admin Portal</h2>
             <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column', width: '300px', marginTop: '1rem'}}>
-              <input type="password" placeholder="Admin Password" value={password} onChange={e => setPassword(e.target.value)} />
-              <button type="submit">View Feedbacks</button>
+              <input type="password" placeholder="Admin Password" value={password} onChange={e => setPassword(e.target.value)} disabled={isLoading} />
+              <button type="submit" disabled={isLoading}>{isLoading ? 'Loading...' : 'View Feedbacks'}</button>
             </form>
             {error && <p style={{color: 'red'}}>{error}</p>}
           </div>
@@ -634,7 +651,7 @@ function AdminPortal({ injectedStyles }) {
           <div>
             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem'}}>
                <h2>User Feedback</h2>
-               <button className="nav-btn" onClick={() => setAuthenticated(false)}>Log Out</button>
+               <button className="nav-btn" onClick={() => { setAuthenticated(false); setPassword(''); setFeedbacks([]); }}>Log Out</button>
             </div>
             
             {feedbacks.length === 0 ? <p>No feedback available yet.</p> : null}

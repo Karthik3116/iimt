@@ -6,9 +6,64 @@ const ExcelJS = require('exceljs');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
 
+// Security middlewares
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
+const xss = require('xss-clean');
+
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// --- SECURITY MIDDLEWARE ---
+// 1. Set security HTTP headers
+app.use(helmet());
+
+// 2. Restrict CORS (Update FRONTEND_URL in your .env, fallback to '*' for dev)
+app.use(cors({
+    origin: process.env.FRONTEND_URL || '*', 
+    methods: ['GET', 'POST'],
+    credentials: true
+}));
+
+// 3. Limit body payload to prevent payload-based DDoS
+app.use(express.json({ limit: '15kb' }));
+
+// --- EXPRESS 5 COMPATIBILITY FIX ---
+// Express 5 makes req.query a read-only getter. Old security packages (xss-clean, 
+// express-mongo-sanitize) try to mutate it directly, causing a crash. 
+// This middleware unlocks it and makes it writable again before they run.
+app.use((req, res, next) => {
+    Object.defineProperty(req, 'query', {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: req.query
+    });
+    next();
+});
+
+// 4. Data Sanitization against NoSQL query injection
+app.use(mongoSanitize()); 
+
+// 5. Data Sanitization against XSS
+app.use(xss()); 
+
+// 6. Rate Limiting (Prevents Brute Force & API-level DDoS)
+const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 150, // Limit each IP to 150 requests per `window`
+    message: { error: "Too many requests from this IP, please try again after 15 minutes." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use('/api', globalLimiter); // Apply to all /api routes
+
+// Stricter rate limit for sensitive routes (Auth & Admin)
+const strictLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 15, // Limit each IP to 15 login/admin attempts per hour
+    message: { error: "Too many authorization attempts from this IP, please try again after an hour." }
+});
 
 // --- 1. MONGODB CONNECTION & SCHEMAS ---
 const MONGO_URI = process.env.MONGO_URI;
@@ -24,17 +79,14 @@ const userSchema = new mongoose.Schema({
     picture: String,
     createdAt: { type: Date, default: Date.now }
 });
-
 const User = mongoose.model('User', userSchema);
 
-// New Feedback Schema
 const feedbackSchema = new mongoose.Schema({
     userEmail: String,
     userName: String,
-    message: String,
+    message: { type: String, maxlength: 1000 }, 
     createdAt: { type: Date, default: Date.now }
 });
-
 const Feedback = mongoose.model('Feedback', feedbackSchema);
 
 // --- 2. GOOGLE AUTH SETUP ---
@@ -46,7 +98,7 @@ app.get("/", async (req, res) => {
     return res.json("Backend is running blazingly fast 🚀");
 });
 
-app.post('/api/auth/google', async (req, res) => {
+app.post('/api/auth/google', strictLimiter, async (req, res) => {
     const { token } = req.body;
     try {
         const ticket = await client.verifyIdToken({
@@ -66,7 +118,6 @@ app.post('/api/auth/google', async (req, res) => {
             await user.save();
             console.log(`New user registered: ${email}`);
         }
-
         res.json({ message: 'Login successful', user });
     } catch (error) {
         console.error('Auth Error:', error);
@@ -74,10 +125,10 @@ app.post('/api/auth/google', async (req, res) => {
     }
 });
 
-// --- NEW: FEEDBACK & ADMIN ROUTES ---
 app.post('/api/feedback', async (req, res) => {
     const { email, name, message } = req.body;
     if (!email || !message) return res.status(400).json({ error: "Missing required fields" });
+    if (message.length > 1000) return res.status(400).json({ error: "Message too long." });
     
     try {
         const newFeedback = new Feedback({ userEmail: email, userName: name, message });
@@ -89,23 +140,19 @@ app.post('/api/feedback', async (req, res) => {
     }
 });
 
-// Admin Route (Secured by Password)
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123'; // Change this in your .env
-app.post('/api/admin/feedbacks', async (req, res) => {
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+app.post('/api/admin/feedbacks', strictLimiter, async (req, res) => {
     const { password } = req.body;
-    
     if (password !== ADMIN_PASSWORD) {
         return res.status(401).json({ error: "Unauthorized. Incorrect password." });
     }
-
     try {
-        const feedbacks = await Feedback.find().sort({ createdAt: -1 }); // Newest first
+        const feedbacks = await Feedback.find().sort({ createdAt: -1 });
         res.json({ success: true, feedbacks });
     } catch (error) {
         res.status(500).json({ error: "Server error fetching feedbacks." });
     }
 });
-
 
 // --- 4. EXCEL PARSING HELPER FUNCTIONS ---
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
@@ -329,7 +376,7 @@ const extractSectionData = (workbook, section) => {
 
                 for (let c = 2; c < colsSpan; c++) {
                     const cell = row.getCell(targetCol + c);
-                    const subjectStr = getCellText(cell);
+                    const subjectStr = getCellText(cell); 
                     let slotTime = timeHeaders[c] ? timeHeaders[c].replace(/(\r\n|\n|\r)/gm, " ").trim() : 'Event';
 
                     if (slotTime.toLowerCase() === 'remarks') slotTime = 'Remarks / Event';
@@ -382,7 +429,7 @@ const extractSectionData = (workbook, section) => {
                 if (rowNumber > summaryStartIndex) {
                     const sessions = getCellText(row.getCell(1));
                     const credits = getCellText(row.getCell(2));
-                    const subject = getCellText(row.getCell(actualTeachingCol - 1));
+                    const subject = getCellText(row.getCell(actualTeachingCol - 1)); 
                     const actualTeaching = getCellText(row.getCell(actualTeachingCol));
                     const preMid = getCellText(row.getCell(actualTeachingCol + 1));
                     const postMid = getCellText(row.getCell(actualTeachingCol + 2));
@@ -455,9 +502,7 @@ app.get('/api/timetable/:section', async (req, res) => {
         if (!forceRefresh && globalCache[section] && (Date.now() - lastFetchTime < CACHE_TTL_MS)) {
             return res.json(globalCache[section]);
         }
-
         await updateCache();
-
         if (globalCache[section]) {
             return res.json(globalCache[section]);
         } else {
