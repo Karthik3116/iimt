@@ -10,7 +10,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- 1. MONGODB CONNECTION & SCHEMA ---
+// --- 1. MONGODB CONNECTION & SCHEMAS ---
 const MONGO_URI = process.env.MONGO_URI;
 
 console.log("Trying to connect with the DB...");
@@ -27,11 +27,21 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+// New Feedback Schema
+const feedbackSchema = new mongoose.Schema({
+    userEmail: String,
+    userName: String,
+    message: String,
+    createdAt: { type: Date, default: Date.now }
+});
+
+const Feedback = mongoose.model('Feedback', feedbackSchema);
+
 // --- 2. GOOGLE AUTH SETUP ---
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
-// --- 3. AUTHENTICATION ROUTE ---
+// --- 3. AUTHENTICATION & CORE ROUTES ---
 app.get("/", async (req, res) => {
     return res.json("Backend is running blazingly fast 🚀");
 });
@@ -63,6 +73,39 @@ app.post('/api/auth/google', async (req, res) => {
         res.status(401).json({ error: 'Invalid or expired token' });
     }
 });
+
+// --- NEW: FEEDBACK & ADMIN ROUTES ---
+app.post('/api/feedback', async (req, res) => {
+    const { email, name, message } = req.body;
+    if (!email || !message) return res.status(400).json({ error: "Missing required fields" });
+    
+    try {
+        const newFeedback = new Feedback({ userEmail: email, userName: name, message });
+        await newFeedback.save();
+        res.json({ success: true, message: "Feedback submitted successfully." });
+    } catch (error) {
+        console.error("Feedback Error:", error);
+        res.status(500).json({ error: "Server error saving feedback." });
+    }
+});
+
+// Admin Route (Secured by Password)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123'; // Change this in your .env
+app.post('/api/admin/feedbacks', async (req, res) => {
+    const { password } = req.body;
+    
+    if (password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: "Unauthorized. Incorrect password." });
+    }
+
+    try {
+        const feedbacks = await Feedback.find().sort({ createdAt: -1 }); // Newest first
+        res.json({ success: true, feedbacks });
+    } catch (error) {
+        res.status(500).json({ error: "Server error fetching feedbacks." });
+    }
+});
+
 
 // --- 4. EXCEL PARSING HELPER FUNCTIONS ---
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
@@ -129,7 +172,6 @@ const parseMergeRange = (rangeStr) => {
 };
 
 // --- 5. CORE EXTRACTION LOGIC ---
-// Separated to allow batch processing of multiple sections per download
 const extractSectionData = (workbook, section) => {
     let targetCol = null;
     let sectionEndCol = null;
@@ -359,13 +401,12 @@ const extractSectionData = (workbook, section) => {
 };
 
 
-// --- 6. BACKGROUND POLLING & IN-MEMORY CACHE (The Performance Upgrade) ---
+// --- 6. BACKGROUND POLLING & IN-MEMORY CACHE ---
 let globalCache = {};
 let lastFetchTime = 0;
 let isFetching = false;
 let activeFetchPromise = null;
 
-// Only refetch if the cache is older than 5 minutes
 const CACHE_TTL_MS = 5 * 60 * 1000; 
 const ALL_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
@@ -383,7 +424,6 @@ const updateCache = async () => {
             
             const newCache = {};
             
-            // Process ALL sections in one pass. Resource Sharing principle applied.
             for (const sec of ALL_SECTIONS) {
                 const data = extractSectionData(workbook, sec);
                 if (data) newCache[sec] = data;
@@ -406,18 +446,16 @@ const updateCache = async () => {
 };
 
 
-// --- 7. TIMETABLE API (O(1) Time Complexity on Read) ---
+// --- 7. TIMETABLE API ---
 app.get('/api/timetable/:section', async (req, res) => {
     const section = req.params.section.toUpperCase();
     const forceRefresh = req.query.force === 'true';
 
     try {
-        // SCENARIO 1: We have fresh cached data and no force refresh requested -> Instant Response
         if (!forceRefresh && globalCache[section] && (Date.now() - lastFetchTime < CACHE_TTL_MS)) {
             return res.json(globalCache[section]);
         }
 
-        // SCENARIO 2: Cache is empty, expired, or user clicked "Sync Data" -> Wait for the fetch pipeline
         await updateCache();
 
         if (globalCache[section]) {
@@ -426,7 +464,6 @@ app.get('/api/timetable/:section', async (req, res) => {
             return res.status(404).json({ error: `Section ${section} not found in ERP data.` });
         }
     } catch (error) {
-        // SCENARIO 3: Network went down, but we have stale cache -> Serve stale cache to prevent downtime
         if (globalCache[section]) {
             console.log(`[Fallback] Served stale cache for Section ${section} due to network error.`);
             return res.json(globalCache[section]);
@@ -455,11 +492,7 @@ const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    
-    // Warm up the cache instantly on boot so the very first user doesn't wait
     updateCache().catch(console.error);
-
-    // Start background daemons
-    setInterval(updateCache, CACHE_TTL_MS); // Auto-refresh data every 5 mins
-    setInterval(pingServer, PING_INTERVAL_MS); // Keep Render server awake
+    setInterval(updateCache, CACHE_TTL_MS); 
+    setInterval(pingServer, PING_INTERVAL_MS); 
 });
