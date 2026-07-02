@@ -1,32 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock } from 'lucide-react';
+import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo } from 'lucide-react';
+import { TodoModal, TodoSummaryBar } from './TodoWidgets'; 
 import './App.css';
 
 const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
-
-// REPLACE THIS STRING WITH YOUR ACTUAL GOOGLE CLIENT ID
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
-const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
-// const API_BASE_URL = "http://localhost:5000"
+// const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+const API_BASE_URL = 'http://localhost:5000';
 
 const SWIPE_THRESHOLD = 40;
 const SWIPE_HINT_MAX_SHOWS = 3;
 const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
 const SWIPE_HINT_AUTO_DISMISS_MS = 3200;
 
-// --- GLOBAL AXIOS INTERCEPTOR ---
-// Automatically intercept any 401 Unauthorized responses (e.g. token expired) 
-// and clear the local session, forcing the user back to the login screen.
 axios.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401 && window.location.pathname !== '/admin') {
       googleLogout();
       localStorage.removeItem('iimt_user');
-      localStorage.removeItem('iimt_token'); // Clear JWT
+      localStorage.removeItem('iimt_token'); 
       window.location.reload();
     }
     return Promise.reject(error);
@@ -41,7 +37,6 @@ function App() {
   const [section, setSection] = useState('A');
 
   const [cache, setCache] = useState({});
-
   const [scheduleData, setScheduleData] = useState([]);
   const [summaryData, setSummaryData] = useState({ headers: [], rows: [] });
 
@@ -52,23 +47,24 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // --- SWIPE & ANIMATION STATE ---
   const [daySwipeAnim, setDaySwipeAnim] = useState('fade-in');
   const [dragX, setDragX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
 
-  // --- TUTORIAL STATE ---
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const hintHandledThisSession = useRef(false);
   const hintDismissTimer = useRef(null);
 
-  // --- FEEDBACK STATE ---
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // TODO STATE
+  const [todos, setTodos] = useState({});
+  const [activeTodoClass, setActiveTodoClass] = useState(null);
 
   const getTodayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -76,28 +72,63 @@ function App() {
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'User')}&background=dba315&color=fff`;
   };
 
+  const fetchUserTodos = async (token) => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/todos`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setTodos(res.data);
+    } catch (err) {
+      console.error("Failed to fetch todos from DB", err);
+    }
+  };
+
   useEffect(() => {
     const storedUser = localStorage.getItem('iimt_user');
-    const storedToken = localStorage.getItem('iimt_token'); // NEW: Check for token
+    const storedToken = localStorage.getItem('iimt_token'); 
     if (storedUser && storedToken) {
-      setUser(JSON.parse(storedUser));
+      const parsedUser = JSON.parse(storedUser);
+      setUser(parsedUser);
+      fetchUserTodos(storedToken);
     } else {
-      // If either is missing, ensure clean state
       localStorage.removeItem('iimt_user');
       localStorage.removeItem('iimt_token');
     }
   }, []);
 
+  // OPTIMISTIC SYNC LOGIC
+  const handleUpdateTodos = async (date, subject, newTodoList) => {
+    // 1. Optimistic Update (UI updates instantly)
+    setTodos(prev => {
+      const updated = { ...prev };
+      if (!updated[date]) updated[date] = {};
+      updated[date][subject] = newTodoList;
+      
+      if (newTodoList.length === 0) delete updated[date][subject];
+      if (Object.keys(updated[date]).length === 0) delete updated[date];
+      
+      return updated;
+    });
+
+    // 2. Background DB Sync
+    try {
+      const token = localStorage.getItem('iimt_token');
+      await axios.post(`${API_BASE_URL}/api/todos`, 
+        { date, subject, tasks: newTodoList }, 
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (err) {
+      console.error("Failed to sync todo update to server", err);
+    }
+  };
+
   useEffect(() => {
     if (user) fetchTimetable(section);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, user]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && user) {
-        fetchTimetable(section, false, true); 
-      }
+      if (document.visibilityState === 'visible' && user) fetchTimetable(section, false, true); 
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -119,9 +150,7 @@ function App() {
   }, [user]);
 
   useEffect(() => {
-    return () => {
-      if (hintDismissTimer.current) clearTimeout(hintDismissTimer.current);
-    };
+    return () => { if (hintDismissTimer.current) clearTimeout(hintDismissTimer.current); };
   }, []);
 
   const dismissSwipeHint = () => {
@@ -132,30 +161,30 @@ function App() {
   const handleGoogleSuccess = async (credentialResponse) => {
     try {
       setAuthError('');
-      const res = await axios.post(`${API_BASE_URL}/api/auth/google`, {
-        token: credentialResponse.credential
-      });
+      const res = await axios.post(`${API_BASE_URL}/api/auth/google`, { token: credentialResponse.credential });
       
       const loggedInUser = res.data.user;
-      const sessionToken = res.data.token; // NEW: Grab the JWT from the backend
+      const sessionToken = res.data.token; 
 
       setUser(loggedInUser);
       localStorage.setItem('iimt_user', JSON.stringify(loggedInUser));
-      localStorage.setItem('iimt_token', sessionToken); // NEW: Store the JWT
+      localStorage.setItem('iimt_token', sessionToken); 
+
+      // Fetch fresh todos for newly logged in user
+      fetchUserTodos(sessionToken);
+
     } catch (err) {
-      if (err.response?.status === 429) {
-        setAuthError(err.response.data.error || 'Too many attempts. Try again later.');
-      } else {
-        setAuthError(err.response?.data?.error || 'Authentication failed. Please try again.');
-      }
+      if (err.response?.status === 429) setAuthError(err.response.data.error || 'Too many attempts. Try again later.');
+      else setAuthError(err.response?.data?.error || 'Authentication failed. Please try again.');
     }
   };
 
   const handleLogout = () => {
     googleLogout();
     setUser(null);
+    setTodos({});
     localStorage.removeItem('iimt_user');
-    localStorage.removeItem('iimt_token'); // NEW: Clear token on logout
+    localStorage.removeItem('iimt_token'); 
     setCache({});
   };
 
@@ -187,19 +216,12 @@ function App() {
       applyDateLogic(cache[sec].timetable);
       return;
     }
-
-    if (!isBackgroundRefresh) {
-      setLoading(true);
-      setError('');
-    }
+    if (!isBackgroundRefresh) { setLoading(true); setError(''); }
 
     try {
-      const token = localStorage.getItem('iimt_token'); // Grab stored token
-      
+      const token = localStorage.getItem('iimt_token'); 
       const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`, {
-        headers: {
-          Authorization: `Bearer ${token}` // NEW: Attach token to protected route
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
       
       const data = res.data.timetable;
@@ -208,19 +230,12 @@ function App() {
       setScheduleData(data);
       setSummaryData(summary);
       
-      if (!isBackgroundRefresh) {
-        applyDateLogic(data);
-      }
-
-      setCache(prevCache => ({
-        ...prevCache,
-        [sec]: { timetable: data, summary: summary }
-      }));
+      if (!isBackgroundRefresh) applyDateLogic(data);
+      setCache(prevCache => ({ ...prevCache, [sec]: { timetable: data, summary: summary } }));
     } catch (err) {
-      console.error(err);
       if (err.response?.status === 429) {
           if (!isBackgroundRefresh) setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
-      } else if (err.response?.status !== 401) { // 401 is handled globally by interceptor
+      } else if (err.response?.status !== 401) { 
           if (!isBackgroundRefresh) setError('System Error: Unable to fetch ERP data.');
       }
     } finally {
@@ -243,16 +258,9 @@ function App() {
     setIsSubmitting(true);
     setFeedbackStatus('Sending...');
     try {
-      const token = localStorage.getItem('iimt_token'); // Grab stored token
-      
-      await axios.post(`${API_BASE_URL}/api/feedback`, {
-        // We no longer need to send email/name in the body!
-        // The backend extracts it securely from the token.
-        message: feedbackText
-      }, {
-        headers: {
-          Authorization: `Bearer ${token}` // NEW: Attach token to protected route
-        }
+      const token = localStorage.getItem('iimt_token'); 
+      await axios.post(`${API_BASE_URL}/api/feedback`, { message: feedbackText }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
       
       setFeedbackStatus('Sent! Thank you.');
@@ -264,11 +272,8 @@ function App() {
       }, 2000);
     } catch (error) {
       setIsSubmitting(false);
-      if (error.response?.status === 429) {
-          setFeedbackStatus('Rate limited. Please wait.');
-      } else {
-          setFeedbackStatus('Failed to send.');
-      }
+      if (error.response?.status === 429) setFeedbackStatus('Rate limited. Please wait.');
+      else setFeedbackStatus('Failed to send.');
     }
   };
 
@@ -320,17 +325,17 @@ function App() {
 
   const handleTouchEnd = () => {
     setIsDragging(false);
-    if (Math.abs(dragX) > SWIPE_THRESHOLD) {
-      goToDay(dragX < 0 ? 'next' : 'prev');
-    }
+    if (Math.abs(dragX) > SWIPE_THRESHOLD) goToDay(dragX < 0 ? 'next' : 'prev');
     setDragX(0);
   };
+
+  const hasTasksToday = todos[selectedDate] && Object.keys(todos[selectedDate]).length > 0;
 
   const injectedStyles = `
     /* --- MOBILE RESPONSIVENESS FIXES --- */
     @media (max-width: 768px) {
       .dashboard-layout { min-height: 100dvh; }
-      .main-content { padding-bottom: 120px !important; }
+      .main-content { padding-bottom: ${hasTasksToday ? '160px' : '120px'} !important; transition: padding-bottom 0.3s ease;}
       .timetable-section { padding-bottom: env(safe-area-inset-bottom, 40px); }
       .mobile-swipe-hint { display: flex !important; }
       .swipe-tutorial-overlay { display: flex !important; }
@@ -343,7 +348,6 @@ function App() {
     .dot-wave .dot:nth-child(1) { animation-delay: 0s; }
     .dot-wave .dot:nth-child(2) { animation-delay: 0.15s; }
     .dot-wave .dot:nth-child(3) { animation-delay: 0.3s; }
-
     @keyframes smooth-wave {
       0%, 100% { transform: translateY(0) scale(0.8); opacity: 0.3; }
       50% { transform: translateY(-14px) scale(1.1); opacity: 1; }
@@ -359,7 +363,6 @@ function App() {
     @keyframes premiumSlideInRight { from { transform: translateX(45px) scale(0.98); opacity: 0; } to { transform: translateX(0) scale(1); opacity: 1; } }
     @keyframes premiumSlideInLeft { from { transform: translateX(-45px) scale(0.98); opacity: 0; } to { transform: translateX(0) scale(1); opacity: 1; } }
     @keyframes premiumFadeIn { from { transform: translateY(12px) scale(0.99); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
-
     .swipe-left { animation: premiumSlideInRight 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
     .swipe-right { animation: premiumSlideInLeft 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
     .fade-in { animation: premiumFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
@@ -379,9 +382,14 @@ function App() {
     .swipe-tutorial-text { color: #fff; font-size: 0.95rem; font-weight: 600; letter-spacing: 0.2px; text-align: center; }
     .swipe-tutorial-dismiss { color: rgba(255, 255, 255, 0.55); font-size: 0.75rem; font-weight: 500; margin-top: 0.15rem; }
 
-    /* --- FEEDBACK MODAL --- */
+    /* --- FIX: FORCED TEXT VISIBILITY ON ALL INPUTS & TEXTAREAS --- */
+    .modal-content textarea, .admin-login input, .todo-input-form input {
+      color: #333 !important;
+      background-color: #fff !important;
+    }
+    
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-    .modal-content { background: white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; }
+    .modal-content { background: white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; color: #333; }
     .modal-content textarea { width: 100%; height: 100px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: inherit; resize: none; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .btn-submit { background: var(--accent-gold); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
@@ -389,12 +397,60 @@ function App() {
     .btn-cancel { background: #eee; color: #333; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
     .btn-cancel:disabled { background: #f5f5f5; color: #999; cursor: not-allowed; }
 
+    /* --- TO-DO WIDGET STYLES --- */
+    .class-header-flex { display: flex; justify-content: space-between; align-items: flex-start; }
+    .add-task-btn { background: rgba(219, 163, 21, 0.1); border: 1px solid rgba(219, 163, 21, 0.3); border-radius: 8px; padding: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--accent-gold); position: relative; transition: all 0.2s ease; }
+    .add-task-btn:hover { background: rgba(219, 163, 21, 0.2); }
+    .task-indicator { position: absolute; top: -3px; right: -3px; background: red; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid white; }
+    
+    .todo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 2000; display: flex; align-items: flex-end; justify-content: center; animation: fadeOverlay 0.3s ease; }
+    @keyframes fadeOverlay { from { opacity: 0; } to { opacity: 1; } }
+    
+    .todo-bottom-sheet { background: white; width: 100%; max-width: 600px; border-radius: 20px 20px 0 0; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; box-shadow: 0 -4px 20px rgba(0,0,0,0.15); animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; max-height: 80vh; color: #333; }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    
+    .todo-sheet-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 1rem; }
+    .todo-subject { margin: 0; font-size: 1.2rem; color: #333; }
+    .todo-date { margin: 4px 0 0 0; font-size: 0.85rem; color: #888; }
+    .todo-close-btn { background: none; border: none; padding: 4px; cursor: pointer; color: #666; border-radius: 50%; display: flex; }
+    .todo-close-btn:hover { background: #f5f5f5; }
+    
+    .todo-list-container { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+    .todo-empty { text-align: center; color: #aaa; font-style: italic; padding: 2rem 0; font-size: 0.9rem; }
+    
+    .todo-item { display: flex; align-items: center; gap: 12px; background: #f9f9f9; padding: 12px; border-radius: 8px; border: 1px solid #eee; transition: all 0.2s; color: #333;}
+    .todo-item.completed { opacity: 0.6; }
+    .todo-item.completed .todo-text { text-decoration: line-through; color: #888; }
+    .todo-check-btn { background: none; border: none; padding: 0; cursor: pointer; display: flex; align-items: center; }
+    .todo-text { flex: 1; font-size: 0.95rem; word-break: break-word; }
+    .todo-delete-btn { background: none; border: none; color: #ff4d4f; padding: 6px; cursor: pointer; border-radius: 6px; display: flex; }
+    .todo-delete-btn:hover { background: #fff1f0; }
+    
+    .todo-input-form { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #eee; }
+    .todo-input-form input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; outline: none; }
+    .todo-input-form input:focus { border-color: var(--accent-gold); }
+    .todo-input-form button { background: var(--accent-gold); color: white; border: none; padding: 0 16px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .todo-input-form button:disabled { background: #e0c88b; cursor: not-allowed; }
+
+    .todo-summary-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: white; box-shadow: 0 -4px 12px rgba(0,0,0,0.1); border-radius: 16px 16px 0 0; z-index: 100; display: flex; flex-direction: column; transition: max-height 0.3s ease; max-height: 60px; overflow: hidden; color: #333; }
+    @media (min-width: 769px) { .todo-summary-bar { width: calc(100% - 260px); left: 260px; } }
+    .todo-summary-bar.expanded { max-height: 40vh; }
+    .todo-summary-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; cursor: pointer; background: white; user-select: none; }
+    .todo-summary-info { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: #333; }
+    .todo-summary-list { padding: 0 1.5rem 1.5rem 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
+    .todo-summary-subject-group { background: #fcfcfc; border: 1px solid #eee; border-radius: 8px; padding: 10px; cursor: pointer; }
+    .todo-summary-subject-title { font-size: 0.8rem; font-weight: 700; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .todo-summary-item { display: flex; align-items: flex-start; gap: 8px; font-size: 0.9rem; margin-bottom: 6px; }
+    .todo-summary-item:last-child { margin-bottom: 0; }
+    .todo-summary-item.completed { opacity: 0.5; text-decoration: line-through; }
+    .todo-summary-text { flex: 1; word-break: break-word; line-height: 1.4; margin-top: -1px; }
+
     /* --- ADMIN PORTAL --- */
-    .admin-container { padding: 2rem; max-width: 800px; margin: 0 auto; font-family: sans-serif; }
+    .admin-container { padding: 2rem; max-width: 800px; margin: 0 auto; font-family: sans-serif; color: #333; }
     .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
     .admin-login input { padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc; }
     .admin-login button { background: var(--accent-gold); color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }
-    .feedback-card { background: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--accent-gold); }
+    .feedback-card { background: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--accent-gold); color: #333; }
   `;
 
   if (window.location.pathname === '/admin') {
@@ -408,11 +464,7 @@ function App() {
           <div className="login-card" style={{ padding: '3rem', background: '#fff', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', textAlign: 'center', minWidth: '320px' }}>
             <h1 style={{ color: 'var(--accent-gold)', marginBottom: '0.5rem' }}>IIM Trichy</h1>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>PGPM Term-I Portal</p>
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={() => setAuthError('Google Login Failed')}
-              useOneTap
-            />
+            <GoogleLogin onSuccess={handleGoogleSuccess} onError={() => setAuthError('Google Login Failed')} useOneTap />
             {authError && <div style={{ color: 'var(--color-cancelled)', marginTop: '1rem', fontSize: '0.9rem', fontWeight: 'bold' }}>{authError}</div>}
             <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>*Requires @iimtrichy.ac.in email address</p>
           </div>
@@ -431,19 +483,12 @@ function App() {
     <>
       <style>{injectedStyles}</style>
 
-      {/* FEEDBACK MODAL */}
       {showFeedbackModal && (
         <div className="modal-overlay" onClick={() => !isSubmitting && setShowFeedbackModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0 }}>Submit Feedback</h3>
             <p style={{ fontSize: '0.9rem', color: '#666', margin: 0 }}>Report an issue or suggest a feature.</p>
-            <textarea 
-              placeholder="Type your message here... (max 1000 chars)"
-              maxLength={1000}
-              value={feedbackText}
-              onChange={e => setFeedbackText(e.target.value)}
-              disabled={isSubmitting}
-            />
+            <textarea placeholder="Type your message here... (max 1000 chars)" maxLength={1000} value={feedbackText} onChange={e => setFeedbackText(e.target.value)} disabled={isSubmitting} />
             {feedbackStatus && <div style={{fontSize: '0.85rem', color: 'var(--accent-gold)'}}>{feedbackStatus}</div>}
             <div className="modal-actions">
               <button className="btn-cancel" disabled={isSubmitting} onClick={() => setShowFeedbackModal(false)}>Cancel</button>
@@ -452,6 +497,14 @@ function App() {
           </div>
         </div>
       )}
+
+      <TodoModal 
+        isOpen={!!activeTodoClass} 
+        onClose={() => setActiveTodoClass(null)} 
+        activeClass={activeTodoClass} 
+        todos={todos} 
+        onUpdate={handleUpdateTodos} 
+      />
 
       {showSwipeHint && (
         <div className="swipe-tutorial-overlay" onClick={dismissSwipeHint} onTouchStart={dismissSwipeHint} role="button">
@@ -471,60 +524,37 @@ function App() {
           <div className="brand-subtitle">PGPM Term-I</div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '1rem', marginTop: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-              <img
-                src={user.picture || getFallbackAvatar(user.name)}
-                alt="Profile"
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.src = getFallbackAvatar(user.name);
-                }}
-                style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }}
-              />
+              <img src={user.picture || getFallbackAvatar(user.name)} alt="Profile" onError={(e) => { e.target.onerror = null; e.target.src = getFallbackAvatar(user.name); }} style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
               <div style={{ overflow: 'hidden' }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user.name}</div>
               </div>
           </div>
 
           <div className="nav-menu">
-            <button className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`} onClick={() => setActiveTab('timetable')}>
-              <Calendar size={18} /> Timetable
-            </button>
-            <button className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}>
-              <Table2 size={18} /> Summary Table
-            </button>
+            <button className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`} onClick={() => setActiveTab('timetable')}><Calendar size={18} /> Timetable</button>
+            <button className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}><Table2 size={18} /> Summary Table</button>
           </div>
 
           <div className="section-selector-container">
             <span className="section-label">Select Section</span>
             <div className="sec-grid">
               {SECTIONS.map((sec) => (
-                <button key={sec} className={`section-btn ${section === sec ? 'active' : ''}`} onClick={() => setSection(sec)}>
-                  {sec}
-                </button>
+                <button key={sec} className={`section-btn ${section === sec ? 'active' : ''}`} onClick={() => setSection(sec)}>{sec}</button>
               ))}
             </div>
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}>
-                  <MessageSquare size={18} /> Provide Feedback
-              </button>
-
-              <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}>
-                  <RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}
-              </button>
-              <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}>
-                  <LogOut size={18} /> Sign Out
-              </button>
+              <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><MessageSquare size={18} /> Provide Feedback</button>
+              <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>
+              <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}><LogOut size={18} /> Sign Out</button>
           </div>
         </aside>
 
         <main className="main-content">
           {loading && (
             <div className="satisfying-loader-container">
-              <div className="dot-wave">
-                <div className="dot"></div><div className="dot"></div><div className="dot"></div>
-              </div>
+              <div className="dot-wave"><div className="dot"></div><div className="dot"></div><div className="dot"></div></div>
               <div className="loading-text">Connecting to database...</div>
             </div>
           )}
@@ -537,36 +567,15 @@ function App() {
                 <>
                   <div className="top-toolbar">
                     <h2 className="view-title">
-                      {currentDayData
-                        ? formatHeaderDate(currentDayData.isoDate, currentDayData.day)
-                        : formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}
+                      {currentDayData ? formatHeaderDate(currentDayData.isoDate, currentDayData.day) : formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}
                     </h2>
                     <div className="legend">
-                      <div className="legend-item">
-                        <div className="legend-color" style={{ background: 'var(--color-makeup)' }}></div>
-                        Make-up
-                      </div>
-                      <div className="legend-item">
-                        <div className="legend-color" style={{ background: 'var(--color-cancelled)' }}></div>
-                        Cancelled
-                      </div>
+                      <div className="legend-item"><div className="legend-color" style={{ background: 'var(--color-makeup)' }}></div>Make-up</div>
+                      <div className="legend-item"><div className="legend-color" style={{ background: 'var(--color-cancelled)' }}></div>Cancelled</div>
                     </div>
                     <div className="date-picker-group">
-                      <button onClick={handleResetDate} className="nav-btn" style={{ padding: '0.6rem', border: '1px solid var(--border-color)', margin: '0' }} title="Snap back to Today">
-                        <CalendarSync size={18} color="var(--accent-gold)" />
-                      </button>
-                      <input
-                        type="date"
-                        className="date-input"
-                        value={selectedDate}
-                        min={minDate}
-                        max={maxDate}
-                        onChange={(e) => {
-                          setDaySwipeAnim('fade-in');
-                          setSelectedDate(e.target.value);
-                        }}
-                        disabled={!minDate}
-                      />
+                      <button onClick={handleResetDate} className="nav-btn" style={{ padding: '0.6rem', border: '1px solid var(--border-color)', margin: '0' }} title="Snap back to Today"><CalendarSync size={18} color="var(--accent-gold)" /></button>
+                      <input type="date" className="date-input" value={selectedDate} min={minDate} max={maxDate} onChange={(e) => { setDaySwipeAnim('fade-in'); setSelectedDate(e.target.value); }} disabled={!minDate} />
                     </div>
                   </div>
 
@@ -583,17 +592,26 @@ function App() {
 
                         {currentDayData && currentDayData.classes.map((cls, idx) => {
                           const cardStyle = cls.color ? { borderLeftColor: cls.color, backgroundColor: `${cls.color}10` } : {};
+                          const hasTodos = todos[selectedDate]?.[cls.subject]?.length > 0;
+
                           return (
                             <div key={idx} className="class-card" style={cardStyle}>
                               {cls.status && (
-                                <div className="status-pill" style={{ backgroundColor: cls.color }}>
-                                  {cls.status}
-                                </div>
+                                <div className="status-pill" style={{ backgroundColor: cls.color }}>{cls.status}</div>
                               )}
-                              <div className="time-badge" style={{ color: cls.color || 'var(--text-secondary)'}}>
-                                {cls.time.includes('Remarks') ? <Info size={18} /> : <Clock size={18} />}
-                                <span>{cls.time}</span>
+                              
+                              <div className="class-header-flex">
+                                <div className="time-badge" style={{ color: cls.color || 'var(--text-secondary)'}}>
+                                  {cls.time.includes('Remarks') ? <Info size={18} /> : <Clock size={18} />}
+                                  <span>{cls.time}</span>
+                                </div>
+                                
+                                <button className="add-task-btn" onClick={() => setActiveTodoClass({ subject: cls.subject, date: selectedDate })}>
+                                  <ListTodo size={16} />
+                                  {hasTodos && <span className="task-indicator" />}
+                                </button>
                               </div>
+
                               <div className="class-details">
                                 <div className="subject-name">{cls.subject}</div>
                                 {cls.prof && (
@@ -608,36 +626,30 @@ function App() {
                       </div>
                     </div>
                   </section>
+                  
+                  <TodoSummaryBar 
+                    date={selectedDate} 
+                    todos={todos} 
+                    onOpenClass={(subject) => setActiveTodoClass({ subject, date: selectedDate })} 
+                  />
                 </>
               )}
 
               {activeTab === 'summary' && (
                 <>
-                  <div className="top-toolbar">
-                    <h2 className="view-title">Section {section} Academic Overview</h2>
-                  </div>
+                  <div className="top-toolbar"><h2 className="view-title">Section {section} Academic Overview</h2></div>
                   {summaryData.headers.length > 0 ? (
                     <div className="table-container" style={{ overflowX: 'auto' }}>
                       <table className="erp-table" style={{ minWidth: '900px' }}>
-                        <thead>
-                          <tr>
-                            {summaryData.headers.map((header, idx) => <th key={idx}>{header}</th>)}
-                          </tr>
-                        </thead>
+                        <thead><tr>{summaryData.headers.map((header, idx) => <th key={idx}>{header}</th>)}</tr></thead>
                         <tbody>
                           {summaryData.rows.map((row, rowIdx) => (
-                            <tr key={rowIdx}>
-                              {row.map((cell, cellIdx) => (
-                                <td key={cellIdx}>{cellIdx === 0 ? <strong>{cell}</strong> : cell}</td>
-                              ))}
-                            </tr>
+                            <tr key={rowIdx}>{row.map((cell, cellIdx) => <td key={cellIdx}>{cellIdx === 0 ? <strong>{cell}</strong> : cell}</td>)}</tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  ) : (
-                      <div className="empty-state">No summary data available.</div>
-                  )}
+                  ) : <div className="empty-state">No summary data available.</div>}
                 </>
               )}
             </>
@@ -648,7 +660,6 @@ function App() {
   );
 }
 
-// --- ADMIN PORTAL COMPONENT ---
 function AdminPortal({ injectedStyles }) {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
@@ -660,21 +671,14 @@ function AdminPortal({ injectedStyles }) {
     e.preventDefault();
     setIsLoading(true);
     try {
-      // The admin route wasn't changed to use JWT (it uses the strictLimiter and a password check). 
-      // It stays exactly as it was.
       const res = await axios.post(`${API_BASE_URL}/api/admin/feedbacks`, { password });
       setFeedbacks(res.data.feedbacks);
       setAuthenticated(true);
       setError('');
     } catch (err) {
-      if (err.response?.status === 429) {
-          setError('Rate limit exceeded. Please wait before trying again.');
-      } else {
-          setError('Invalid Password');
-      }
-    } finally {
-      setIsLoading(false);
-    }
+      if (err.response?.status === 429) setError('Rate limit exceeded. Please wait before trying again.');
+      else setError('Invalid Password');
+    } finally { setIsLoading(false); }
   };
 
   return (
@@ -697,14 +701,11 @@ function AdminPortal({ injectedStyles }) {
                <h2>User Feedback</h2>
                <button className="nav-btn" onClick={() => { setAuthenticated(false); setPassword(''); setFeedbacks([]); }}>Log Out</button>
             </div>
-            
             {feedbacks.length === 0 ? <p>No feedback available yet.</p> : null}
-
             {feedbacks.map((f, i) => (
-              <div key={i} className="feedback-card">
+              <div className="feedback-card" key={i}>
                 <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}>
-                  <strong>{f.userName} ({f.userEmail})</strong>
-                  <span style={{fontSize: '0.8rem', color: '#666'}}>{new Date(f.createdAt).toLocaleString()}</span>
+                  <strong>{f.userName} ({f.userEmail})</strong><span style={{fontSize: '0.8rem', color: '#666'}}>{new Date(f.createdAt).toLocaleString()}</span>
                 </div>
                 <p style={{margin: 0, whiteSpace: 'pre-wrap'}}>{f.message}</p>
               </div>

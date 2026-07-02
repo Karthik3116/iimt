@@ -5,7 +5,7 @@ const axios = require('axios');
 const ExcelJS = require('exceljs');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
-const jwt = require('jsonwebtoken'); // NEW: Added JWT for session management
+const jwt = require('jsonwebtoken');
 
 // Security middlewares
 const helmet = require('helmet');
@@ -16,20 +16,14 @@ const xss = require('xss-clean');
 const app = express();
 
 // --- SECURITY MIDDLEWARE ---
-// 1. Set security HTTP headers
 app.use(helmet());
-
-// 2. Restrict CORS
 app.use(cors({
     origin: process.env.FRONTEND_URL || '*', 
     methods: ['GET', 'POST'],
     credentials: true
 }));
-
-// 3. Limit body payload
 app.use(express.json({ limit: '15kb' }));
 
-// --- EXPRESS 5 COMPATIBILITY FIX ---
 app.use((req, res, next) => {
     Object.defineProperty(req, 'query', {
         configurable: true,
@@ -40,11 +34,9 @@ app.use((req, res, next) => {
     next();
 });
 
-// 4. Data Sanitization
 app.use(mongoSanitize()); 
 app.use(xss()); 
 
-// 6. Rate Limiting
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, 
     max: 150, 
@@ -84,26 +76,37 @@ const feedbackSchema = new mongoose.Schema({
 });
 const Feedback = mongoose.model('Feedback', feedbackSchema);
 
+// NEW: Todo Schema
+const todoSchema = new mongoose.Schema({
+    userEmail: { type: String, required: true, index: true },
+    date: { type: String, required: true },
+    subject: { type: String, required: true },
+    tasks: [{
+        id: String,
+        text: String,
+        isCompleted: Boolean
+    }]
+});
+// Compound index for fast querying per user, date, and subject
+todoSchema.index({ userEmail: 1, date: 1, subject: 1 }, { unique: true });
+const Todo = mongoose.model('Todo', todoSchema);
+
 // --- 2. GOOGLE AUTH SETUP ---
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod'; // Use .env in production
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod'; 
 
-// --- NEW: AUTHENTICATION MIDDLEWARE ---
-// This function guards your routes. It checks if the user sent a valid JWT.
+// --- AUTHENTICATION MIDDLEWARE ---
 const authenticateUser = (req, res, next) => {
     const authHeader = req.headers.authorization;
-    
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized: No token provided. Please log in.' });
+        return res.status(401).json({ error: 'Unauthorized Access.' });
     }
-
     const token = authHeader.split(' ')[1];
-
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; // Attach user payload to the request
-        next(); // Allow them to access the route
+        req.user = decoded; 
+        next(); 
     } catch (error) {
         return res.status(401).json({ error: 'Unauthorized: Invalid or expired token.' });
     }
@@ -135,14 +138,12 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
             console.log(`New user registered: ${email}`);
         }
 
-        // NEW: Generate a JWT for the user that lasts 7 days
         const sessionToken = jwt.sign(
             { id: user._id, email: user.email, name: user.name }, 
             JWT_SECRET, 
             { expiresIn: '60d' }
         );
 
-        // Send token back to frontend
         res.json({ message: 'Login successful', user, token: sessionToken });
     } catch (error) {
         console.error('Auth Error:', error);
@@ -150,9 +151,7 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
     }
 });
 
-// NEW: Protected with authenticateUser middleware
 app.post('/api/feedback', authenticateUser, async (req, res) => {
-    // We can now safely pull email/name from req.user (set by middleware) or body
     const { message } = req.body;
     const email = req.user.email;
     const name = req.user.name;
@@ -184,18 +183,61 @@ app.post('/api/admin/feedbacks', strictLimiter, async (req, res) => {
     }
 });
 
+// --- NEW: TODO ROUTES ---
+app.get('/api/todos', authenticateUser, async (req, res) => {
+    try {
+        const todos = await Todo.find({ userEmail: req.user.email });
+        
+        // Reconstruct the nested dictionary format for the frontend
+        const formattedTodos = {};
+        todos.forEach(t => {
+            if (!formattedTodos[t.date]) formattedTodos[t.date] = {};
+            formattedTodos[t.date][t.subject] = t.tasks;
+        });
+        
+        res.json(formattedTodos);
+    } catch (error) {
+        console.error("Error fetching todos:", error);
+        res.status(500).json({ error: "Server error fetching tasks." });
+    }
+});
+
+app.post('/api/todos', authenticateUser, async (req, res) => {
+    const { date, subject, tasks } = req.body;
+    const email = req.user.email;
+    
+    if (!date || !subject || !Array.isArray(tasks)) {
+        return res.status(400).json({ error: "Invalid data format." });
+    }
+
+    try {
+        if (tasks.length === 0) {
+            // Clean up database if no tasks remain for this subject/date
+            await Todo.deleteOne({ userEmail: email, date, subject });
+        } else {
+            // Update or insert the task array (Fix: use returnDocument instead of new)
+            await Todo.findOneAndUpdate(
+                { userEmail: email, date, subject },
+                { tasks },
+                { upsert: true, returnDocument: 'after' } 
+            );
+        }
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error saving todos:", error);
+        res.status(500).json({ error: "Server error saving tasks." });
+    }
+});
+
+
 // --- 4. EXCEL PARSING HELPER FUNCTIONS ---
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
 
 const getCellText = (cell) => {
     if (!cell || cell.value === null || cell.value === undefined) return '';
     if (typeof cell.value === 'object') {
-        if (cell.type === ExcelJS.ValueType.Date || cell.value instanceof Date) {
-            return cell.value.toISOString();
-        }
-        if (cell.value.richText) {
-            return cell.value.richText.map(rt => rt.text).join('');
-        }
+        if (cell.type === ExcelJS.ValueType.Date || cell.value instanceof Date) return cell.value.toISOString();
+        if (cell.value.richText) return cell.value.richText.map(rt => rt.text).join('');
         if ('formula' in cell.value || 'sharedFormula' in cell.value) {
             let res = cell.value.result;
             if (res !== undefined && res !== null) {
@@ -229,9 +271,7 @@ const getCellColor = (cell) => {
 
 const colLetterToNumber = (letters) => {
     let col = 0;
-    for (let i = 0; i < letters.length; i++) {
-        col = col * 26 + (letters.charCodeAt(i) - 64);
-    }
+    for (let i = 0; i < letters.length; i++) col = col * 26 + (letters.charCodeAt(i) - 64);
     return col;
 };
 
@@ -262,7 +302,6 @@ const extractSectionData = (workbook, section) => {
         for (const rangeStr of merges) {
             const range = parseMergeRange(rangeStr);
             if (!range || range.startRow !== 1) continue;
-
             const titleCell = sheet.getCell(range.startRow, range.startCol);
             const text = getCellText(titleCell).toUpperCase().replace(/\s+/g, ' ');
 
@@ -321,10 +360,7 @@ const extractSectionData = (workbook, section) => {
                     break;
                 }
             }
-            if (found) {
-                headerRowIdx = r;
-                break;
-            }
+            if (found) { headerRowIdx = r; break; }
         }
     }
 
@@ -445,16 +481,12 @@ const extractSectionData = (workbook, section) => {
             const cellText = getCellText(cell).toLowerCase();
             if (cellText.includes('actual teaching')) {
                 const dist = Math.abs(colNum - targetCol);
-                if (dist < minDistance) {
-                    minDistance = dist;
-                    actualTeachingCol = colNum;
-                }
+                if (dist < minDistance) { minDistance = dist; actualTeachingCol = colNum; }
             }
         });
 
         if (actualTeachingCol !== -1) {
             summaryData.headers = ['Subject', 'Credits', 'Sessions', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
-
             sheet.eachRow((row, rowNumber) => {
                 if (rowNumber > summaryStartIndex) {
                     const sessions = getCellText(row.getCell(1));
@@ -477,13 +509,11 @@ const extractSectionData = (workbook, section) => {
     return { timetable, summary: summaryData };
 };
 
-
 // --- 6. BACKGROUND POLLING & IN-MEMORY CACHE ---
 let globalCache = {};
 let lastFetchTime = 0;
 let isFetching = false;
 let activeFetchPromise = null;
-
 const CACHE_TTL_MS = 5 * 60 * 1000; 
 const ALL_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
@@ -495,12 +525,10 @@ const updateCache = async () => {
         try {
             console.log("[Cache] Downloading and parsing Excel sheet...");
             const response = await axios.get(SHEET_URL, { responseType: 'arraybuffer' });
-            
             const workbook = new ExcelJS.Workbook();
             await workbook.xlsx.load(response.data);
             
             const newCache = {};
-            
             for (const sec of ALL_SECTIONS) {
                 const data = extractSectionData(workbook, sec);
                 if (data) newCache[sec] = data;
@@ -510,7 +538,6 @@ const updateCache = async () => {
             lastFetchTime = Date.now();
             console.log("[Cache] Successfully updated all sections in memory.");
             return globalCache;
-
         } catch (error) {
             console.error("[Cache Error] Failed to fetch or parse Excel data:", error);
             throw error;
@@ -522,9 +549,7 @@ const updateCache = async () => {
     return activeFetchPromise;
 };
 
-
 // --- 7. TIMETABLE API ---
-// NEW: Added `authenticateUser` middleware here to lock down the data endpoint
 app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     const section = req.params.section.toUpperCase();
     const forceRefresh = req.query.force === 'true';
@@ -548,7 +573,6 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     }
 });
 
-
 // --- 8. SELF-PING & DAEMON ---
 const PING_URL = "https://iimt-7iy6.onrender.com";
 let pingCount = 0;
@@ -563,7 +587,7 @@ const pingServer = async () => {
     }
 };
 
-const PING_INTERVAL_MS = 240000; // 4 mins
+const PING_INTERVAL_MS = 240000; 
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
