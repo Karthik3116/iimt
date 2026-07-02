@@ -8,8 +8,8 @@ import './App.css';
 const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
-// const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+// const API_BASE_URL = 'http://localhost:5000';
 
 const SWIPE_THRESHOLD = 40;
 const SWIPE_HINT_MAX_SHOWS = 3;
