@@ -9,7 +9,7 @@ const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
-// const API_BASE_URL = 'http://localhost:5000';
+// const API_BASE_URL =  'http://localhost:5000';
 
 const SWIPE_THRESHOLD = 40;
 const SWIPE_HINT_MAX_SHOWS = 3;
@@ -339,6 +339,10 @@ function App() {
       .timetable-section { padding-bottom: env(safe-area-inset-bottom, 40px); }
       .mobile-swipe-hint { display: flex !important; }
       .swipe-tutorial-overlay { display: flex !important; }
+      
+      /* Collapse admin sidebar on very small screens */
+      .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
+      .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
     }
 
     /* --- SATISFYING LOADER ANIMATION --- */
@@ -445,12 +449,32 @@ function App() {
     .todo-summary-item.completed { opacity: 0.5; text-decoration: line-through; }
     .todo-summary-text { flex: 1; word-break: break-word; line-height: 1.4; margin-top: -1px; }
 
-    /* --- ADMIN PORTAL --- */
-    .admin-container { padding: 2rem; max-width: 800px; margin: 0 auto; font-family: sans-serif; color: #333; }
-    .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+    /* --- NEW ADMIN PORTAL DASHBOARD LAYOUT --- */
+    .admin-container-fluid { font-family: sans-serif; color: #333; height: 100vh; background: #f5f5f5;}
+    .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff;}
     .admin-login input { padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc; }
     .admin-login button { background: var(--accent-gold); color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }
-    .feedback-card { background: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 8px; border-left: 4px solid var(--accent-gold); color: #333; }
+    
+    .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; }
+    .admin-sidebar { width: 300px; background: white; border-right: 1px solid #eee; display: flex; flex-direction: column; }
+    .admin-sidebar-header { padding: 1.5rem; border-bottom: 1px solid #eee; }
+    .admin-sidebar-content { flex: 1; overflow-y: auto; padding: 1rem; }
+    
+    .admin-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fafafa;}
+    .admin-main-header { padding: 1.5rem; border-bottom: 1px solid #eee; background: white; display: flex; justify-content: space-between; align-items: center;}
+    .admin-main-content { flex: 1; overflow-y: auto; padding: 1.5rem; }
+    
+    .active-user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 8px; transition: background 0.2s;}
+    .active-user-card:hover { background: #f9f9f9; }
+    .active-user-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+    .active-user-info { flex: 1; overflow: hidden; }
+    .active-user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+    .active-user-time { font-size: 0.75rem; color: #666; }
+    
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
+    .status-dot.online { background: #4caf50; box-shadow: 0 0 5px rgba(76, 175, 80, 0.4); }
+
+    .feedback-card { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid var(--accent-gold); color: #333; box-shadow: 0 2px 8px rgba(0,0,0,0.05);}
   `;
 
   if (window.location.pathname === '/admin') {
@@ -660,10 +684,14 @@ function App() {
   );
 }
 
+// --- NEW SPLIT-PANE DASHBOARD COMPONENT ---
 function AdminPortal({ injectedStyles }) {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
+  
   const [feedbacks, setFeedbacks] = useState([]);
+  const [users, setUsers] = useState([]); // NEW STATE
+  
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -671,8 +699,9 @@ function AdminPortal({ injectedStyles }) {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/admin/feedbacks`, { password });
+      const res = await axios.post(`${API_BASE_URL}/api/admin/data`, { password });
       setFeedbacks(res.data.feedbacks);
+      setUsers(res.data.users);
       setAuthenticated(true);
       setError('');
     } catch (err) {
@@ -681,35 +710,80 @@ function AdminPortal({ injectedStyles }) {
     } finally { setIsLoading(false); }
   };
 
+  // Helper function to calculate active status dynamically
+  const timeAgo = (date) => {
+    if (!date) return "Never logged in";
+    const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+    
+    let interval = seconds / 86400;
+    if (interval > 1) return Math.floor(interval) + "d ago";
+    interval = seconds / 3600;
+    if (interval > 1) return Math.floor(interval) + "h ago";
+    interval = seconds / 60;
+    if (interval > 5) return Math.floor(interval) + "m ago";
+    
+    return "Online Now";
+  };
+
   return (
     <>
       <style>{injectedStyles}</style>
-      <div className="admin-container">
+      <div className="admin-container-fluid">
         {!authenticated ? (
           <div className="admin-login">
             <Lock size={48} color="var(--accent-gold)" style={{marginBottom: '1rem'}} />
             <h2>Admin Portal</h2>
             <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column', width: '300px', marginTop: '1rem'}}>
               <input type="password" placeholder="Admin Password" value={password} onChange={e => setPassword(e.target.value)} disabled={isLoading} />
-              <button type="submit" disabled={isLoading}>{isLoading ? 'Loading...' : 'View Feedbacks'}</button>
+              <button type="submit" disabled={isLoading}>{isLoading ? 'Loading...' : 'View Dashboard'}</button>
             </form>
             {error && <p style={{color: 'red'}}>{error}</p>}
           </div>
         ) : (
-          <div>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem'}}>
-               <h2>User Feedback</h2>
-               <button className="nav-btn" onClick={() => { setAuthenticated(false); setPassword(''); setFeedbacks([]); }}>Log Out</button>
-            </div>
-            {feedbacks.length === 0 ? <p>No feedback available yet.</p> : null}
-            {feedbacks.map((f, i) => (
-              <div className="feedback-card" key={i}>
-                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}>
-                  <strong>{f.userName} ({f.userEmail})</strong><span style={{fontSize: '0.8rem', color: '#666'}}>{new Date(f.createdAt).toLocaleString()}</span>
-                </div>
-                <p style={{margin: 0, whiteSpace: 'pre-wrap'}}>{f.message}</p>
+          <div className="admin-dashboard-layout">
+            
+            {/* LEFT SIDEBAR: Active Users */}
+            <aside className="admin-sidebar">
+              <div className="admin-sidebar-header">
+                <h3 style={{margin: 0}}>Active Users</h3>
+                <p style={{margin: 0, fontSize: '0.8rem', color: '#666'}}>Total Accounts: {users.length}</p>
               </div>
-            ))}
+              <div className="admin-sidebar-content">
+                {users.map(u => {
+                  const isOnline = timeAgo(u.lastActive) === "Online Now";
+                  return (
+                    <div key={u._id} className="active-user-card">
+                      <img src={u.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=dba315&color=fff`} className="active-user-avatar" alt="Avatar"/>
+                      <div className="active-user-info">
+                        <div className="active-user-name" title={u.name}>{u.name}</div>
+                        <div className="active-user-time">{timeAgo(u.lastActive)}</div>
+                      </div>
+                      <div className={`status-dot ${isOnline ? 'online' : ''}`}></div>
+                    </div>
+                  )
+                })}
+              </div>
+            </aside>
+            
+            {/* MAIN CONTENT: Feedback */}
+            <main className="admin-main">
+              <div className="admin-main-header">
+                <h2 style={{margin: 0}}>User Feedback</h2>
+                <button className="nav-btn" onClick={() => { setAuthenticated(false); setPassword(''); setFeedbacks([]); setUsers([]); }}>Log Out</button>
+              </div>
+              <div className="admin-main-content">
+                {feedbacks.length === 0 ? <p>No feedback available yet.</p> : null}
+                {feedbacks.map((f, i) => (
+                  <div className="feedback-card" key={i}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}>
+                      <strong>{f.userName} ({f.userEmail})</strong><span style={{fontSize: '0.8rem', color: '#666'}}>{new Date(f.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p style={{margin: 0, whiteSpace: 'pre-wrap'}}>{f.message}</p>
+                  </div>
+                ))}
+              </div>
+            </main>
+
           </div>
         )}
       </div>

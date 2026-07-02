@@ -64,6 +64,7 @@ const userSchema = new mongoose.Schema({
     name: String,
     email: { type: String, unique: true, required: true },
     picture: String,
+    lastActive: { type: Date, default: Date.now }, // NEW: Tracks recent activity
     createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
@@ -76,7 +77,6 @@ const feedbackSchema = new mongoose.Schema({
 });
 const Feedback = mongoose.model('Feedback', feedbackSchema);
 
-// NEW: Todo Schema
 const todoSchema = new mongoose.Schema({
     userEmail: { type: String, required: true, index: true },
     date: { type: String, required: true },
@@ -87,7 +87,6 @@ const todoSchema = new mongoose.Schema({
         isCompleted: Boolean
     }]
 });
-// Compound index for fast querying per user, date, and subject
 todoSchema.index({ userEmail: 1, date: 1, subject: 1 }, { unique: true });
 const Todo = mongoose.model('Todo', todoSchema);
 
@@ -96,7 +95,7 @@ const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.goog
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod'; 
 
-// --- AUTHENTICATION MIDDLEWARE ---
+// --- AUTHENTICATION MIDDLEWARE WITH ACTIVITY TRACKING ---
 const authenticateUser = (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -106,6 +105,10 @@ const authenticateUser = (req, res, next) => {
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         req.user = decoded; 
+        
+        // NEW: Silently update their last active status in the background
+        User.findByIdAndUpdate(decoded.id, { lastActive: new Date() }).catch(() => {});
+        
         next(); 
     } catch (error) {
         return res.status(401).json({ error: 'Unauthorized: Invalid or expired token.' });
@@ -133,9 +136,12 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
 
         let user = await User.findOne({ email });
         if (!user) {
-            user = new User({ name, email, picture });
+            user = new User({ name, email, picture, lastActive: new Date() });
             await user.save();
             console.log(`New user registered: ${email}`);
+        } else {
+            user.lastActive = new Date(); // Update on fresh login
+            await user.save();
         }
 
         const sessionToken = jwt.sign(
@@ -169,32 +175,32 @@ app.post('/api/feedback', authenticateUser, async (req, res) => {
     }
 });
 
+// NEW: Consolidated Admin Dashboard Route
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-app.post('/api/admin/feedbacks', strictLimiter, async (req, res) => {
+app.post('/api/admin/data', strictLimiter, async (req, res) => {
     const { password } = req.body;
     if (password !== ADMIN_PASSWORD) {
         return res.status(401).json({ error: "Unauthorized. Incorrect password." });
     }
     try {
+        // Fetch both feedbacks and user activity sorted by most recent
         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
-        res.json({ success: true, feedbacks });
+        const users = await User.find().sort({ lastActive: -1 }).select('-__v'); 
+        res.json({ success: true, feedbacks, users });
     } catch (error) {
-        res.status(500).json({ error: "Server error fetching feedbacks." });
+        res.status(500).json({ error: "Server error fetching admin data." });
     }
 });
 
-// --- NEW: TODO ROUTES ---
+// --- TODO ROUTES ---
 app.get('/api/todos', authenticateUser, async (req, res) => {
     try {
         const todos = await Todo.find({ userEmail: req.user.email });
-        
-        // Reconstruct the nested dictionary format for the frontend
         const formattedTodos = {};
         todos.forEach(t => {
             if (!formattedTodos[t.date]) formattedTodos[t.date] = {};
             formattedTodos[t.date][t.subject] = t.tasks;
         });
-        
         res.json(formattedTodos);
     } catch (error) {
         console.error("Error fetching todos:", error);
@@ -212,10 +218,8 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 
     try {
         if (tasks.length === 0) {
-            // Clean up database if no tasks remain for this subject/date
             await Todo.deleteOne({ userEmail: email, date, subject });
         } else {
-            // Update or insert the task array (Fix: use returnDocument instead of new)
             await Todo.findOneAndUpdate(
                 { userEmail: email, date, subject },
                 { tasks },
