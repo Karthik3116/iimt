@@ -17,6 +17,22 @@ const SWIPE_HINT_MAX_SHOWS = 3;
 const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
 const SWIPE_HINT_AUTO_DISMISS_MS = 3200;
 
+// --- GLOBAL AXIOS INTERCEPTOR ---
+// Automatically intercept any 401 Unauthorized responses (e.g. token expired) 
+// and clear the local session, forcing the user back to the login screen.
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 && window.location.pathname !== '/admin') {
+      googleLogout();
+      localStorage.removeItem('iimt_user');
+      localStorage.removeItem('iimt_token'); // Clear JWT
+      window.location.reload();
+    }
+    return Promise.reject(error);
+  }
+);
+
 function App() {
   const [user, setUser] = useState(null);
   const [authError, setAuthError] = useState('');
@@ -62,7 +78,14 @@ function App() {
 
   useEffect(() => {
     const storedUser = localStorage.getItem('iimt_user');
-    if (storedUser) setUser(JSON.parse(storedUser));
+    const storedToken = localStorage.getItem('iimt_token'); // NEW: Check for token
+    if (storedUser && storedToken) {
+      setUser(JSON.parse(storedUser));
+    } else {
+      // If either is missing, ensure clean state
+      localStorage.removeItem('iimt_user');
+      localStorage.removeItem('iimt_token');
+    }
   }, []);
 
   useEffect(() => {
@@ -112,9 +135,13 @@ function App() {
       const res = await axios.post(`${API_BASE_URL}/api/auth/google`, {
         token: credentialResponse.credential
       });
+      
       const loggedInUser = res.data.user;
+      const sessionToken = res.data.token; // NEW: Grab the JWT from the backend
+
       setUser(loggedInUser);
       localStorage.setItem('iimt_user', JSON.stringify(loggedInUser));
+      localStorage.setItem('iimt_token', sessionToken); // NEW: Store the JWT
     } catch (err) {
       if (err.response?.status === 429) {
         setAuthError(err.response.data.error || 'Too many attempts. Try again later.');
@@ -128,6 +155,7 @@ function App() {
     googleLogout();
     setUser(null);
     localStorage.removeItem('iimt_user');
+    localStorage.removeItem('iimt_token'); // NEW: Clear token on logout
     setCache({});
   };
 
@@ -166,7 +194,14 @@ function App() {
     }
 
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`);
+      const token = localStorage.getItem('iimt_token'); // Grab stored token
+      
+      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`, {
+        headers: {
+          Authorization: `Bearer ${token}` // NEW: Attach token to protected route
+        }
+      });
+      
       const data = res.data.timetable;
       const summary = res.data.summary;
 
@@ -185,7 +220,7 @@ function App() {
       console.error(err);
       if (err.response?.status === 429) {
           if (!isBackgroundRefresh) setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
-      } else {
+      } else if (err.response?.status !== 401) { // 401 is handled globally by interceptor
           if (!isBackgroundRefresh) setError('System Error: Unable to fetch ERP data.');
       }
     } finally {
@@ -208,11 +243,18 @@ function App() {
     setIsSubmitting(true);
     setFeedbackStatus('Sending...');
     try {
+      const token = localStorage.getItem('iimt_token'); // Grab stored token
+      
       await axios.post(`${API_BASE_URL}/api/feedback`, {
-        email: user.email,
-        name: user.name,
+        // We no longer need to send email/name in the body!
+        // The backend extracts it securely from the token.
         message: feedbackText
+      }, {
+        headers: {
+          Authorization: `Bearer ${token}` // NEW: Attach token to protected route
+        }
       });
+      
       setFeedbackStatus('Sent! Thank you.');
       setTimeout(() => {
         setShowFeedbackModal(false);
@@ -618,6 +660,8 @@ function AdminPortal({ injectedStyles }) {
     e.preventDefault();
     setIsLoading(true);
     try {
+      // The admin route wasn't changed to use JWT (it uses the strictLimiter and a password check). 
+      // It stays exactly as it was.
       const res = await axios.post(`${API_BASE_URL}/api/admin/feedbacks`, { password });
       setFeedbacks(res.data.feedbacks);
       setAuthenticated(true);

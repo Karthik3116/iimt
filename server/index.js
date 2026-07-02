@@ -5,6 +5,7 @@ const axios = require('axios');
 const ExcelJS = require('exceljs');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
+const jwt = require('jsonwebtoken'); // NEW: Added JWT for session management
 
 // Security middlewares
 const helmet = require('helmet');
@@ -18,20 +19,17 @@ const app = express();
 // 1. Set security HTTP headers
 app.use(helmet());
 
-// 2. Restrict CORS (Update FRONTEND_URL in your .env, fallback to '*' for dev)
+// 2. Restrict CORS
 app.use(cors({
     origin: process.env.FRONTEND_URL || '*', 
     methods: ['GET', 'POST'],
     credentials: true
 }));
 
-// 3. Limit body payload to prevent payload-based DDoS
+// 3. Limit body payload
 app.use(express.json({ limit: '15kb' }));
 
 // --- EXPRESS 5 COMPATIBILITY FIX ---
-// Express 5 makes req.query a read-only getter. Old security packages (xss-clean, 
-// express-mongo-sanitize) try to mutate it directly, causing a crash. 
-// This middleware unlocks it and makes it writable again before they run.
 app.use((req, res, next) => {
     Object.defineProperty(req, 'query', {
         configurable: true,
@@ -42,26 +40,23 @@ app.use((req, res, next) => {
     next();
 });
 
-// 4. Data Sanitization against NoSQL query injection
+// 4. Data Sanitization
 app.use(mongoSanitize()); 
-
-// 5. Data Sanitization against XSS
 app.use(xss()); 
 
-// 6. Rate Limiting (Prevents Brute Force & API-level DDoS)
+// 6. Rate Limiting
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 150, // Limit each IP to 150 requests per `window`
+    windowMs: 15 * 60 * 1000, 
+    max: 150, 
     message: { error: "Too many requests from this IP, please try again after 15 minutes." },
     standardHeaders: true,
     legacyHeaders: false,
 });
-app.use('/api', globalLimiter); // Apply to all /api routes
+app.use('/api', globalLimiter); 
 
-// Stricter rate limit for sensitive routes (Auth & Admin)
 const strictLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 15, // Limit each IP to 15 login/admin attempts per hour
+    windowMs: 60 * 60 * 1000, 
+    max: 15, 
     message: { error: "Too many authorization attempts from this IP, please try again after an hour." }
 });
 
@@ -92,6 +87,27 @@ const Feedback = mongoose.model('Feedback', feedbackSchema);
 // --- 2. GOOGLE AUTH SETUP ---
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod'; // Use .env in production
+
+// --- NEW: AUTHENTICATION MIDDLEWARE ---
+// This function guards your routes. It checks if the user sent a valid JWT.
+const authenticateUser = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: No token provided. Please log in.' });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded; // Attach user payload to the request
+        next(); // Allow them to access the route
+    } catch (error) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid or expired token.' });
+    }
+};
 
 // --- 3. AUTHENTICATION & CORE ROUTES ---
 app.get("/", async (req, res) => {
@@ -118,16 +134,30 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
             await user.save();
             console.log(`New user registered: ${email}`);
         }
-        res.json({ message: 'Login successful', user });
+
+        // NEW: Generate a JWT for the user that lasts 7 days
+        const sessionToken = jwt.sign(
+            { id: user._id, email: user.email, name: user.name }, 
+            JWT_SECRET, 
+            { expiresIn: '60d' }
+        );
+
+        // Send token back to frontend
+        res.json({ message: 'Login successful', user, token: sessionToken });
     } catch (error) {
         console.error('Auth Error:', error);
-        res.status(401).json({ error: 'Invalid or expired token' });
+        res.status(401).json({ error: 'Invalid or expired Google token' });
     }
 });
 
-app.post('/api/feedback', async (req, res) => {
-    const { email, name, message } = req.body;
-    if (!email || !message) return res.status(400).json({ error: "Missing required fields" });
+// NEW: Protected with authenticateUser middleware
+app.post('/api/feedback', authenticateUser, async (req, res) => {
+    // We can now safely pull email/name from req.user (set by middleware) or body
+    const { message } = req.body;
+    const email = req.user.email;
+    const name = req.user.name;
+
+    if (!message) return res.status(400).json({ error: "Missing required fields" });
     if (message.length > 1000) return res.status(400).json({ error: "Message too long." });
     
     try {
@@ -494,7 +524,8 @@ const updateCache = async () => {
 
 
 // --- 7. TIMETABLE API ---
-app.get('/api/timetable/:section', async (req, res) => {
+// NEW: Added `authenticateUser` middleware here to lock down the data endpoint
+app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     const section = req.params.section.toUpperCase();
     const forceRefresh = req.query.force === 'true';
 
