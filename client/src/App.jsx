@@ -10,7 +10,7 @@ const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'https://your-render-backend-url.onrender.com';
-// const API_BASE_URL = "http://localhost:5000"
+
 const SWIPE_THRESHOLD = 40;
 const SWIPE_HINT_MAX_SHOWS = 3;
 const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
@@ -68,12 +68,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, user]);
 
-  // --- FIX FOR MOBILE RELOAD ISSUE (Visibility Change) ---
+  // --- FIX: SILENT BACKGROUND REFRESH ---
   useEffect(() => {
     const handleVisibilityChange = () => {
-      // When the app comes back to the foreground, force a data refresh if logged in
+      // When the app comes back to the foreground, silently fetch from the backend's
+      // fast 5-minute memory cache without forcing a heavy Excel sync or showing loaders.
       if (document.visibilityState === 'visible' && user) {
-        fetchTimetable(section, true);
+        fetchTimetable(section, false, true); 
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -149,25 +150,33 @@ function App() {
     }
   };
 
-  const fetchTimetable = async (sec, forceSync = false) => {
-    if (!forceSync && cache[sec]) {
+  const fetchTimetable = async (sec, forceBackendSync = false, isBackgroundRefresh = false) => {
+    // If it's not a forced sync and not a background refresh, use fast local React state cache
+    if (!forceBackendSync && !isBackgroundRefresh && cache[sec]) {
       setScheduleData(cache[sec].timetable);
       setSummaryData(cache[sec].summary);
       applyDateLogic(cache[sec].timetable);
       return;
     }
 
-    setLoading(true);
-    setError('');
+    // Only show full-screen loader if it's NOT a background refresh
+    if (!isBackgroundRefresh) {
+      setLoading(true);
+      setError('');
+    }
 
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceSync}`);
+      const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`);
       const data = res.data.timetable;
       const summary = res.data.summary;
 
       setScheduleData(data);
       setSummaryData(summary);
-      applyDateLogic(data);
+      
+      // Prevent snapping the user's selected date back to today if they are mid-browse
+      if (!isBackgroundRefresh) {
+        applyDateLogic(data);
+      }
 
       setCache(prevCache => ({
         ...prevCache,
@@ -175,15 +184,15 @@ function App() {
       }));
     } catch (err) {
       console.error(err);
-      setError('System Error: Unable to fetch ERP data.');
+      if (!isBackgroundRefresh) setError('System Error: Unable to fetch ERP data.');
     } finally {
-      setLoading(false);
+      if (!isBackgroundRefresh) setLoading(false);
     }
   };
 
   const handleSyncData = () => {
     setCache({});
-    fetchTimetable(section, true);
+    fetchTimetable(section, true, false); // Force heavy sync on manual button press
   };
 
   const handleResetDate = () => {
