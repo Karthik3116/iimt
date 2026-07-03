@@ -3,6 +3,8 @@ import axios from 'axios';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
 import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo } from 'lucide-react';
 import { TodoModal, TodoSummaryBar } from './TodoWidgets'; 
+import { Analytics } from '@vercel/analytics/next';
+
 import './App.css';
 
 const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
@@ -680,8 +682,11 @@ function App() {
           )}
         </main>
       </div>
+      <Analytics />
     </>
   );
+
+
 }
 
 // --- NEW SPLIT-PANE DASHBOARD COMPONENT ---
