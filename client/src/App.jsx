@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo } from 'lucide-react';
-import { TodoModal, TodoSummaryBar } from './TodoWidgets'; 
+import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Radio } from 'lucide-react';
+import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 import { Analytics } from '@vercel/analytics/react';
 
 import './App.css';
@@ -17,6 +17,7 @@ const SWIPE_THRESHOLD = 40;
 const SWIPE_HINT_MAX_SHOWS = 3;
 const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
 const SWIPE_HINT_AUTO_DISMISS_MS = 3200;
+const SECTION_STORAGE_KEY = 'iimt_section'; // NEW: persists the student's last-picked section
 
 axios.interceptors.response.use(
   (response) => response,
@@ -24,7 +25,7 @@ axios.interceptors.response.use(
     if (error.response?.status === 401 && window.location.pathname !== '/admin') {
       googleLogout();
       localStorage.removeItem('iimt_user');
-      localStorage.removeItem('iimt_token'); 
+      localStorage.removeItem('iimt_token');
       window.location.reload();
     }
     return Promise.reject(error);
@@ -36,7 +37,13 @@ function App() {
   const [authError, setAuthError] = useState('');
 
   const [activeTab, setActiveTab] = useState('timetable');
-  const [section, setSection] = useState('A');
+
+  // NEW: initialize section synchronously from localStorage so there's no
+  // flash/glitch of the wrong section's timetable before the saved value loads.
+  const [section, setSection] = useState(() => {
+    const stored = localStorage.getItem(SECTION_STORAGE_KEY);
+    return stored && SECTIONS.includes(stored) ? stored : 'A';
+  });
 
   const [cache, setCache] = useState({});
   const [scheduleData, setScheduleData] = useState([]);
@@ -64,6 +71,15 @@ function App() {
   const [feedbackStatus, setFeedbackStatus] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // NEW: Settings modal (lets a student change/persist their section)
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsSectionDraft, setSettingsSectionDraft] = useState(section);
+  const [settingsStatus, setSettingsStatus] = useState('');
+
+  // NEW: live-sync metadata (when the Excel data was last pulled / will next refresh)
+  const [syncMeta, setSyncMeta] = useState({ lastFetchTime: null, nextRefreshTime: null, cacheTTLMs: null });
+  const [nowTick, setNowTick] = useState(Date.now()); // ticks so the banner countdown stays live
+
   // TODO STATE
   const [todos, setTodos] = useState({});
   const [activeTodoClass, setActiveTodoClass] = useState(null);
@@ -85,38 +101,71 @@ function App() {
     }
   };
 
+  // NEW: pull the student's saved section preference from the server and apply it
+  const fetchUserProfile = async (token) => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/user/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const savedSection = res.data?.user?.defaultSection;
+      if (savedSection && SECTIONS.includes(savedSection)) {
+        setSection(savedSection);
+        localStorage.setItem(SECTION_STORAGE_KEY, savedSection);
+      }
+    } catch (err) {
+      console.error("Failed to fetch user profile", err);
+    }
+  };
+
   useEffect(() => {
     const storedUser = localStorage.getItem('iimt_user');
-    const storedToken = localStorage.getItem('iimt_token'); 
+    const storedToken = localStorage.getItem('iimt_token');
     if (storedUser && storedToken) {
       const parsedUser = JSON.parse(storedUser);
       setUser(parsedUser);
       fetchUserTodos(storedToken);
+      fetchUserProfile(storedToken);
     } else {
       localStorage.removeItem('iimt_user');
       localStorage.removeItem('iimt_token');
     }
   }, []);
 
-  // OPTIMISTIC SYNC LOGIC
-  const handleUpdateTodos = async (date, subject, newTodoList) => {
+  // NEW: keep localStorage in sync whenever the section changes, and push the
+  // change to the server so it's remembered for this student on any device.
+  useEffect(() => {
+    localStorage.setItem(SECTION_STORAGE_KEY, section);
+    setSettingsSectionDraft(section);
+    if (user) {
+      const token = localStorage.getItem('iimt_token');
+      axios.post(`${API_BASE_URL}/api/user/section`, { section }, {
+        headers: { Authorization: `Bearer ${token}` }
+      }).catch((err) => console.error("Failed to save section preference", err));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, user]);
+
+  // OPTIMISTIC SYNC LOGIC — todos are now keyed date -> section -> subject
+  const handleUpdateTodos = async (date, sec, subject, newTodoList) => {
     // 1. Optimistic Update (UI updates instantly)
     setTodos(prev => {
       const updated = { ...prev };
       if (!updated[date]) updated[date] = {};
-      updated[date][subject] = newTodoList;
-      
-      if (newTodoList.length === 0) delete updated[date][subject];
-      if (Object.keys(updated[date]).length === 0) delete updated[date];
-      
+      if (!updated[date][sec]) updated[date][sec] = {};
+      updated[date][sec][subject] = newTodoList;
+
+      if (newTodoList.length === 0) delete updated[date][sec][subject];
+      if (Object.keys(updated[date][sec] || {}).length === 0) delete updated[date][sec];
+      if (Object.keys(updated[date] || {}).length === 0) delete updated[date];
+
       return updated;
     });
 
     // 2. Background DB Sync
     try {
       const token = localStorage.getItem('iimt_token');
-      await axios.post(`${API_BASE_URL}/api/todos`, 
-        { date, subject, tasks: newTodoList }, 
+      await axios.post(`${API_BASE_URL}/api/todos`,
+        { date, section: sec, subject, tasks: newTodoList },
         { headers: { Authorization: `Bearer ${token}` } }
       );
     } catch (err) {
@@ -126,15 +175,32 @@ function App() {
 
   useEffect(() => {
     if (user) fetchTimetable(section);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, user]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && user) fetchTimetable(section, false, true); 
+      if (document.visibilityState === 'visible' && user) fetchTimetable(section, false, true);
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, section]);
+
+  // NEW: auto-refresh once the server's cache TTL window has elapsed, so the
+  // page pulls fresh Excel data automatically while it stays open — no manual
+  // "Sync Data" click required.
+  useEffect(() => {
+    if (!user || !syncMeta.nextRefreshTime) return;
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+      if (Date.now() >= syncMeta.nextRefreshTime) {
+        fetchTimetable(section, false, true);
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, section, syncMeta.nextRefreshTime]);
 
   useEffect(() => {
     if (!user || hintHandledThisSession.current) return;
@@ -164,16 +230,17 @@ function App() {
     try {
       setAuthError('');
       const res = await axios.post(`${API_BASE_URL}/api/auth/google`, { token: credentialResponse.credential });
-      
+
       const loggedInUser = res.data.user;
-      const sessionToken = res.data.token; 
+      const sessionToken = res.data.token;
 
       setUser(loggedInUser);
       localStorage.setItem('iimt_user', JSON.stringify(loggedInUser));
-      localStorage.setItem('iimt_token', sessionToken); 
+      localStorage.setItem('iimt_token', sessionToken);
 
-      // Fetch fresh todos for newly logged in user
+      // Fetch fresh todos + saved section preference for newly logged in user
       fetchUserTodos(sessionToken);
+      fetchUserProfile(sessionToken);
 
     } catch (err) {
       if (err.response?.status === 429) setAuthError(err.response.data.error || 'Too many attempts. Try again later.');
@@ -186,7 +253,7 @@ function App() {
     setUser(null);
     setTodos({});
     localStorage.removeItem('iimt_user');
-    localStorage.removeItem('iimt_token'); 
+    localStorage.removeItem('iimt_token');
     setCache({});
   };
 
@@ -215,29 +282,32 @@ function App() {
     if (!forceBackendSync && !isBackgroundRefresh && cache[sec]) {
       setScheduleData(cache[sec].timetable);
       setSummaryData(cache[sec].summary);
+      if (cache[sec].meta) setSyncMeta(cache[sec].meta);
       applyDateLogic(cache[sec].timetable);
       return;
     }
     if (!isBackgroundRefresh) { setLoading(true); setError(''); }
 
     try {
-      const token = localStorage.getItem('iimt_token'); 
+      const token = localStorage.getItem('iimt_token');
       const res = await axios.get(`${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       const data = res.data.timetable;
       const summary = res.data.summary;
+      const meta = res.data.meta;
 
       setScheduleData(data);
       setSummaryData(summary);
-      
+      if (meta) setSyncMeta(meta);
+
       if (!isBackgroundRefresh) applyDateLogic(data);
-      setCache(prevCache => ({ ...prevCache, [sec]: { timetable: data, summary: summary } }));
+      setCache(prevCache => ({ ...prevCache, [sec]: { timetable: data, summary: summary, meta } }));
     } catch (err) {
       if (err.response?.status === 429) {
           if (!isBackgroundRefresh) setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
-      } else if (err.response?.status !== 401) { 
+      } else if (err.response?.status !== 401) {
           if (!isBackgroundRefresh) setError('System Error: Unable to fetch ERP data.');
       }
     } finally {
@@ -247,7 +317,7 @@ function App() {
 
   const handleSyncData = () => {
     setCache({});
-    fetchTimetable(section, true, false); 
+    fetchTimetable(section, true, false);
   };
 
   const handleResetDate = () => {
@@ -260,11 +330,11 @@ function App() {
     setIsSubmitting(true);
     setFeedbackStatus('Sending...');
     try {
-      const token = localStorage.getItem('iimt_token'); 
+      const token = localStorage.getItem('iimt_token');
       await axios.post(`${API_BASE_URL}/api/feedback`, { message: feedbackText }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       setFeedbackStatus('Sent! Thank you.');
       setTimeout(() => {
         setShowFeedbackModal(false);
@@ -279,12 +349,35 @@ function App() {
     }
   };
 
+  // NEW: Settings modal save handler
+  const saveSectionSetting = () => {
+    setSettingsStatus('Saved!');
+    setSection(settingsSectionDraft); // triggers persistence effect + timetable refetch
+    setTimeout(() => {
+      setShowSettingsModal(false);
+      setSettingsStatus('');
+    }, 700);
+  };
+
   const currentDayData = scheduleData.find(d => d.isoDate === selectedDate);
   const formatHeaderDate = (isoDate, dayString) => {
     if (!isoDate) return 'Timetable';
     const dateObj = new Date(isoDate);
     const formatted = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     return `${dayString}, ${formatted}`;
+  };
+
+  // NEW: format an epoch ms timestamp as a local (IST-friendly) HH:MM time string
+  const formatClockTime = (ts) => {
+    if (!ts) return '--:--';
+    return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+  };
+
+  // NEW: minutes remaining until the next automatic data refresh
+  const minutesToNextRefresh = () => {
+    if (!syncMeta.nextRefreshTime) return null;
+    const diffMs = syncMeta.nextRefreshTime - nowTick;
+    return Math.max(0, Math.ceil(diffMs / 60000));
   };
 
   const shiftIsoDate = (isoDate, days) => {
@@ -331,7 +424,7 @@ function App() {
     setDragX(0);
   };
 
-  const hasTasksToday = todos[selectedDate] && Object.keys(todos[selectedDate]).length > 0;
+  const hasTasksToday = todos[selectedDate]?.[section] && Object.keys(todos[selectedDate][section]).length > 0;
 
   const injectedStyles = `
     /* --- MOBILE RESPONSIVENESS FIXES --- */
@@ -341,7 +434,7 @@ function App() {
       .timetable-section { padding-bottom: env(safe-area-inset-bottom, 40px); }
       .mobile-swipe-hint { display: flex !important; }
       .swipe-tutorial-overlay { display: flex !important; }
-      
+
       /* Collapse admin sidebar on very small screens */
       .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
       .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
@@ -393,7 +486,7 @@ function App() {
       color: #333 !important;
       background-color: #fff !important;
     }
-    
+
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
     .modal-content { background: white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; color: #333; }
     .modal-content textarea { width: 100%; height: 100px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: inherit; resize: none; }
@@ -403,27 +496,43 @@ function App() {
     .btn-cancel { background: #eee; color: #333; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
     .btn-cancel:disabled { background: #f5f5f5; color: #999; cursor: not-allowed; }
 
+    /* --- NEW: SETTINGS MODAL --- */
+    .settings-section-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .settings-section-btn { padding: 10px 0; border-radius: 8px; border: 1px solid #ddd; background: #fafafa; color: #333; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
+    .settings-section-btn.active { background: var(--accent-gold); border-color: var(--accent-gold); color: #fff; }
+    .settings-status-text { font-size: 0.85rem; color: var(--accent-gold); font-weight: 600; }
+
+    /* --- NEW: LIVE DATA BANNER --- */
+    .live-data-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.25); color: #2f6b32; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; margin-bottom: 1rem; }
+    .live-data-dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; box-shadow: 0 0 0 rgba(76, 175, 80, 0.5); animation: liveDotPulse 1.8s infinite; flex-shrink: 0; }
+    @keyframes liveDotPulse { 0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5); } 70% { box-shadow: 0 0 0 6px rgba(76, 175, 80, 0); } 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); } }
+    .live-data-banner strong { font-weight: 700; }
+    .live-data-meta { color: #4a7a4c; opacity: 0.85; }
+
+    /* --- NEW: SESSION NUMBER BADGE --- */
+    .session-badge { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.3px; color: var(--accent-gold); background: rgba(219, 163, 21, 0.12); border: 1px solid rgba(219, 163, 21, 0.3); border-radius: 6px; padding: 2px 8px; margin-top: 6px; display: inline-block; }
+
     /* --- TO-DO WIDGET STYLES --- */
     .class-header-flex { display: flex; justify-content: space-between; align-items: flex-start; }
     .add-task-btn { background: rgba(219, 163, 21, 0.1); border: 1px solid rgba(219, 163, 21, 0.3); border-radius: 8px; padding: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--accent-gold); position: relative; transition: all 0.2s ease; }
     .add-task-btn:hover { background: rgba(219, 163, 21, 0.2); }
     .task-indicator { position: absolute; top: -3px; right: -3px; background: red; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid white; }
-    
+
     .todo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 2000; display: flex; align-items: flex-end; justify-content: center; animation: fadeOverlay 0.3s ease; }
     @keyframes fadeOverlay { from { opacity: 0; } to { opacity: 1; } }
-    
+
     .todo-bottom-sheet { background: white; width: 100%; max-width: 600px; border-radius: 20px 20px 0 0; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; box-shadow: 0 -4px 20px rgba(0,0,0,0.15); animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; max-height: 80vh; color: #333; }
     @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-    
+
     .todo-sheet-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 1rem; }
     .todo-subject { margin: 0; font-size: 1.2rem; color: #333; }
     .todo-date { margin: 4px 0 0 0; font-size: 0.85rem; color: #888; }
     .todo-close-btn { background: none; border: none; padding: 4px; cursor: pointer; color: #666; border-radius: 50%; display: flex; }
     .todo-close-btn:hover { background: #f5f5f5; }
-    
+
     .todo-list-container { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
     .todo-empty { text-align: center; color: #aaa; font-style: italic; padding: 2rem 0; font-size: 0.9rem; }
-    
+
     .todo-item { display: flex; align-items: center; gap: 12px; background: #f9f9f9; padding: 12px; border-radius: 8px; border: 1px solid #eee; transition: all 0.2s; color: #333;}
     .todo-item.completed { opacity: 0.6; }
     .todo-item.completed .todo-text { text-decoration: line-through; color: #888; }
@@ -431,7 +540,7 @@ function App() {
     .todo-text { flex: 1; font-size: 0.95rem; word-break: break-word; }
     .todo-delete-btn { background: none; border: none; color: #ff4d4f; padding: 6px; cursor: pointer; border-radius: 6px; display: flex; }
     .todo-delete-btn:hover { background: #fff1f0; }
-    
+
     .todo-input-form { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #eee; }
     .todo-input-form input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; outline: none; }
     .todo-input-form input:focus { border-color: var(--accent-gold); }
@@ -456,23 +565,23 @@ function App() {
     .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff;}
     .admin-login input { padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc; }
     .admin-login button { background: var(--accent-gold); color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }
-    
+
     .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; }
     .admin-sidebar { width: 300px; background: white; border-right: 1px solid #eee; display: flex; flex-direction: column; }
     .admin-sidebar-header { padding: 1.5rem; border-bottom: 1px solid #eee; }
     .admin-sidebar-content { flex: 1; overflow-y: auto; padding: 1rem; }
-    
+
     .admin-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fafafa;}
     .admin-main-header { padding: 1.5rem; border-bottom: 1px solid #eee; background: white; display: flex; justify-content: space-between; align-items: center;}
     .admin-main-content { flex: 1; overflow-y: auto; padding: 1.5rem; }
-    
+
     .active-user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 8px; transition: background 0.2s;}
     .active-user-card:hover { background: #f9f9f9; }
     .active-user-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
     .active-user-info { flex: 1; overflow: hidden; }
     .active-user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
     .active-user-time { font-size: 0.75rem; color: #666; }
-    
+
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
     .status-dot.online { background: #4caf50; box-shadow: 0 0 5px rgba(76, 175, 80, 0.4); }
 
@@ -505,6 +614,8 @@ function App() {
     transition: isDragging ? 'none' : 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)',
   };
 
+  const nextRefreshMins = minutesToNextRefresh();
+
   return (
     <>
       <style>{injectedStyles}</style>
@@ -524,12 +635,38 @@ function App() {
         </div>
       )}
 
-      <TodoModal 
-        isOpen={!!activeTodoClass} 
-        onClose={() => setActiveTodoClass(null)} 
-        activeClass={activeTodoClass} 
-        todos={todos} 
-        onUpdate={handleUpdateTodos} 
+      {/* NEW: Settings modal — lets a student change & persist their section */}
+      {showSettingsModal && (
+        <div className="modal-overlay" onClick={() => setShowSettingsModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: 0 }}>Settings</h3>
+            <p style={{ fontSize: '0.9rem', color: '#666', margin: 0 }}>Choose your section. This is saved to your account and remembered next time you log in.</p>
+            <div className="settings-section-grid">
+              {SECTIONS.map(sec => (
+                <button
+                  key={sec}
+                  className={`settings-section-btn ${settingsSectionDraft === sec ? 'active' : ''}`}
+                  onClick={() => setSettingsSectionDraft(sec)}
+                >
+                  {sec}
+                </button>
+              ))}
+            </div>
+            {settingsStatus && <div className="settings-status-text">{settingsStatus}</div>}
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setShowSettingsModal(false)}>Cancel</button>
+              <button className="btn-submit" onClick={saveSectionSetting}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <TodoModal
+        isOpen={!!activeTodoClass}
+        onClose={() => setActiveTodoClass(null)}
+        activeClass={activeTodoClass}
+        todos={todos}
+        onUpdate={handleUpdateTodos}
       />
 
       {showSwipeHint && (
@@ -571,6 +708,7 @@ function App() {
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button onClick={() => { setSettingsSectionDraft(section); setShowSettingsModal(true); }} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><Settings size={18} /> Settings</button>
               <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><MessageSquare size={18} /> Provide Feedback</button>
               <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>
               <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}><LogOut size={18} /> Sign Out</button>
@@ -591,6 +729,16 @@ function App() {
             <>
               {activeTab === 'timetable' && (
                 <>
+                  {/* NEW: Live-data banner */}
+                  <div className="live-data-banner">
+                    <span className="live-data-dot" />
+                    <span><strong>Live data</strong> — synced directly from Excel, no need to refresh manually.</span>
+                    <span className="live-data-meta">
+                      Last synced {formatClockTime(syncMeta.lastFetchTime)} IST
+                      {nextRefreshMins !== null && ` · Next auto-sync in ~${nextRefreshMins} min (at ${formatClockTime(syncMeta.nextRefreshTime)} IST)`}
+                    </span>
+                  </div>
+
                   <div className="top-toolbar">
                     <h2 className="view-title">
                       {currentDayData ? formatHeaderDate(currentDayData.isoDate, currentDayData.day) : formatHeaderDate(selectedDate, new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }))}
@@ -618,21 +766,22 @@ function App() {
 
                         {currentDayData && currentDayData.classes.map((cls, idx) => {
                           const cardStyle = cls.color ? { borderLeftColor: cls.color, backgroundColor: `${cls.color}10` } : {};
-                          const hasTodos = todos[selectedDate]?.[cls.subject]?.length > 0;
+                          const hasTodos = todos[selectedDate]?.[section]?.[cls.subject]?.length > 0;
+                          const isRemark = cls.time?.toLowerCase().includes('remarks');
 
                           return (
                             <div key={idx} className="class-card" style={cardStyle}>
                               {cls.status && (
                                 <div className="status-pill" style={{ backgroundColor: cls.color }}>{cls.status}</div>
                               )}
-                              
+
                               <div className="class-header-flex">
                                 <div className="time-badge" style={{ color: cls.color || 'var(--text-secondary)'}}>
                                   {cls.time.includes('Remarks') ? <Info size={18} /> : <Clock size={18} />}
                                   <span>{cls.time}</span>
                                 </div>
-                                
-                                <button className="add-task-btn" onClick={() => setActiveTodoClass({ subject: cls.subject, date: selectedDate })}>
+
+                                <button className="add-task-btn" onClick={() => setActiveTodoClass({ subject: cls.subject, date: selectedDate, section })}>
                                   <ListTodo size={16} />
                                   {hasTodos && <span className="task-indicator" />}
                                 </button>
@@ -645,6 +794,10 @@ function App() {
                                     <UserIcon size={14} /> {cls.prof}
                                   </div>
                                 )}
+                                {/* NEW: session number badge, e.g. "Session 2" for the 2nd occurrence of this subject */}
+                                {!isRemark && cls.sessionNumber && (
+                                  <div className="session-badge">Session {cls.sessionNumber}</div>
+                                )}
                               </div>
                             </div>
                           )
@@ -652,11 +805,12 @@ function App() {
                       </div>
                     </div>
                   </section>
-                  
-                  <TodoSummaryBar 
-                    date={selectedDate} 
-                    todos={todos} 
-                    onOpenClass={(subject) => setActiveTodoClass({ subject, date: selectedDate })} 
+
+                  <TodoSummaryBar
+                    date={selectedDate}
+                    section={section}
+                    todos={todos}
+                    onOpenClass={(subject) => setActiveTodoClass({ subject, date: selectedDate, section })}
                   />
                 </>
               )}
@@ -685,18 +839,16 @@ function App() {
       <Analytics />
     </>
   );
-
-
 }
 
-// --- NEW SPLIT-PANE DASHBOARD COMPONENT ---
+// --- SPLIT-PANE DASHBOARD COMPONENT ---
 function AdminPortal({ injectedStyles }) {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
-  
+
   const [feedbacks, setFeedbacks] = useState([]);
-  const [users, setUsers] = useState([]); // NEW STATE
-  
+  const [users, setUsers] = useState([]);
+
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -715,18 +867,17 @@ function AdminPortal({ injectedStyles }) {
     } finally { setIsLoading(false); }
   };
 
-  // Helper function to calculate active status dynamically
   const timeAgo = (date) => {
     if (!date) return "Never logged in";
     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-    
+
     let interval = seconds / 86400;
     if (interval > 1) return Math.floor(interval) + "d ago";
     interval = seconds / 3600;
     if (interval > 1) return Math.floor(interval) + "h ago";
     interval = seconds / 60;
     if (interval > 5) return Math.floor(interval) + "m ago";
-    
+
     return "Online Now";
   };
 
@@ -746,7 +897,7 @@ function AdminPortal({ injectedStyles }) {
           </div>
         ) : (
           <div className="admin-dashboard-layout">
-            
+
             {/* LEFT SIDEBAR: Active Users */}
             <aside className="admin-sidebar">
               <div className="admin-sidebar-header">
@@ -761,7 +912,7 @@ function AdminPortal({ injectedStyles }) {
                       <img src={u.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=dba315&color=fff`} className="active-user-avatar" alt="Avatar"/>
                       <div className="active-user-info">
                         <div className="active-user-name" title={u.name}>{u.name}</div>
-                        <div className="active-user-time">{timeAgo(u.lastActive)}</div>
+                        <div className="active-user-time">{timeAgo(u.lastActive)} {u.defaultSection ? `· Sec ${u.defaultSection}` : ''}</div>
                       </div>
                       <div className={`status-dot ${isOnline ? 'online' : ''}`}></div>
                     </div>
@@ -769,7 +920,7 @@ function AdminPortal({ injectedStyles }) {
                 })}
               </div>
             </aside>
-            
+
             {/* MAIN CONTENT: Feedback */}
             <main className="admin-main">
               <div className="admin-main-header">

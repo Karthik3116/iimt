@@ -18,7 +18,7 @@ const app = express();
 // --- SECURITY MIDDLEWARE ---
 app.use(helmet());
 app.use(cors({
-    origin: process.env.FRONTEND_URL || '*', 
+    origin: process.env.FRONTEND_URL || '*',
     methods: ['GET', 'POST'],
     credentials: true
 }));
@@ -34,21 +34,21 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(mongoSanitize()); 
-app.use(xss()); 
+app.use(mongoSanitize());
+app.use(xss());
 
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, 
-    max: 150, 
+    windowMs: 15 * 60 * 1000,
+    max: 150,
     message: { error: "Too many requests from this IP, please try again after 15 minutes." },
     standardHeaders: true,
     legacyHeaders: false,
 });
-app.use('/api', globalLimiter); 
+app.use('/api', globalLimiter);
 
 const strictLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, 
-    max: 15, 
+    windowMs: 60 * 60 * 1000,
+    max: 15,
     message: { error: "Too many authorization attempts from this IP, please try again after an hour." }
 });
 
@@ -60,11 +60,14 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('Connected to MongoDB'))
     .catch((err) => console.error('MongoDB connection error:', err));
 
+const ALL_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+
 const userSchema = new mongoose.Schema({
     name: String,
     email: { type: String, unique: true, required: true },
     picture: String,
-    lastActive: { type: Date, default: Date.now }, // NEW: Tracks recent activity
+    defaultSection: { type: String, enum: ALL_SECTIONS, default: 'A' }, // NEW: persisted section preference
+    lastActive: { type: Date, default: Date.now },
     createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
@@ -72,14 +75,17 @@ const User = mongoose.model('User', userSchema);
 const feedbackSchema = new mongoose.Schema({
     userEmail: String,
     userName: String,
-    message: { type: String, maxlength: 1000 }, 
+    message: { type: String, maxlength: 1000 },
     createdAt: { type: Date, default: Date.now }
 });
 const Feedback = mongoose.model('Feedback', feedbackSchema);
 
+// NEW: `section` is now part of the todo's identity, so the same subject/date
+// can carry different notes per section.
 const todoSchema = new mongoose.Schema({
     userEmail: { type: String, required: true, index: true },
     date: { type: String, required: true },
+    section: { type: String, required: true },
     subject: { type: String, required: true },
     tasks: [{
         id: String,
@@ -87,13 +93,13 @@ const todoSchema = new mongoose.Schema({
         isCompleted: Boolean
     }]
 });
-todoSchema.index({ userEmail: 1, date: 1, subject: 1 }, { unique: true });
+todoSchema.index({ userEmail: 1, date: 1, section: 1, subject: 1 }, { unique: true });
 const Todo = mongoose.model('Todo', todoSchema);
 
 // --- 2. GOOGLE AUTH SETUP ---
 const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod'; 
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 
 // --- AUTHENTICATION MIDDLEWARE WITH ACTIVITY TRACKING ---
 const authenticateUser = (req, res, next) => {
@@ -104,12 +110,12 @@ const authenticateUser = (req, res, next) => {
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; 
-        
-        // NEW: Silently update their last active status in the background
+        req.user = decoded;
+
+        // Silently update their last active status in the background
         User.findByIdAndUpdate(decoded.id, { lastActive: new Date() }).catch(() => {});
-        
-        next(); 
+
+        next();
     } catch (error) {
         return res.status(401).json({ error: 'Unauthorized: Invalid or expired token.' });
     }
@@ -145,8 +151,8 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
         }
 
         const sessionToken = jwt.sign(
-            { id: user._id, email: user.email, name: user.name }, 
-            JWT_SECRET, 
+            { id: user._id, email: user.email, name: user.name },
+            JWT_SECRET,
             { expiresIn: '60d' }
         );
 
@@ -157,6 +163,35 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
     }
 });
 
+// NEW: fetch the latest profile (used to hydrate the saved default section on load)
+app.get('/api/user/me', authenticateUser, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-__v');
+        if (!user) return res.status(404).json({ error: 'User not found.' });
+        res.json({ user });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error fetching profile.' });
+    }
+});
+
+// NEW: persist a student's chosen section so it's remembered across devices/sessions
+app.post('/api/user/section', authenticateUser, async (req, res) => {
+    const { section } = req.body;
+    if (!section || !ALL_SECTIONS.includes(String(section).toUpperCase())) {
+        return res.status(400).json({ error: 'Invalid section.' });
+    }
+    try {
+        const user = await User.findByIdAndUpdate(
+            req.user.id,
+            { defaultSection: String(section).toUpperCase() },
+            { new: true }
+        ).select('-__v');
+        res.json({ success: true, user });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error saving section preference.' });
+    }
+});
+
 app.post('/api/feedback', authenticateUser, async (req, res) => {
     const { message } = req.body;
     const email = req.user.email;
@@ -164,7 +199,7 @@ app.post('/api/feedback', authenticateUser, async (req, res) => {
 
     if (!message) return res.status(400).json({ error: "Missing required fields" });
     if (message.length > 1000) return res.status(400).json({ error: "Message too long." });
-    
+
     try {
         const newFeedback = new Feedback({ userEmail: email, userName: name, message });
         await newFeedback.save();
@@ -175,7 +210,7 @@ app.post('/api/feedback', authenticateUser, async (req, res) => {
     }
 });
 
-// NEW: Consolidated Admin Dashboard Route
+// Consolidated Admin Dashboard Route
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 app.post('/api/admin/data', strictLimiter, async (req, res) => {
     const { password } = req.body;
@@ -183,23 +218,23 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
         return res.status(401).json({ error: "Unauthorized. Incorrect password." });
     }
     try {
-        // Fetch both feedbacks and user activity sorted by most recent
         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
-        const users = await User.find().sort({ lastActive: -1 }).select('-__v'); 
+        const users = await User.find().sort({ lastActive: -1 }).select('-__v');
         res.json({ success: true, feedbacks, users });
     } catch (error) {
         res.status(500).json({ error: "Server error fetching admin data." });
     }
 });
 
-// --- TODO ROUTES ---
+// --- TODO ROUTES (now nested by date -> section -> subject) ---
 app.get('/api/todos', authenticateUser, async (req, res) => {
     try {
         const todos = await Todo.find({ userEmail: req.user.email });
         const formattedTodos = {};
         todos.forEach(t => {
             if (!formattedTodos[t.date]) formattedTodos[t.date] = {};
-            formattedTodos[t.date][t.subject] = t.tasks;
+            if (!formattedTodos[t.date][t.section]) formattedTodos[t.date][t.section] = {};
+            formattedTodos[t.date][t.section][t.subject] = t.tasks;
         });
         res.json(formattedTodos);
     } catch (error) {
@@ -209,21 +244,21 @@ app.get('/api/todos', authenticateUser, async (req, res) => {
 });
 
 app.post('/api/todos', authenticateUser, async (req, res) => {
-    const { date, subject, tasks } = req.body;
+    const { date, section, subject, tasks } = req.body;
     const email = req.user.email;
-    
-    if (!date || !subject || !Array.isArray(tasks)) {
+
+    if (!date || !section || !subject || !Array.isArray(tasks)) {
         return res.status(400).json({ error: "Invalid data format." });
     }
 
     try {
         if (tasks.length === 0) {
-            await Todo.deleteOne({ userEmail: email, date, subject });
+            await Todo.deleteOne({ userEmail: email, date, section, subject });
         } else {
             await Todo.findOneAndUpdate(
-                { userEmail: email, date, subject },
+                { userEmail: email, date, section, subject },
                 { tasks },
-                { upsert: true, returnDocument: 'after' } 
+                { upsert: true, returnDocument: 'after' }
             );
         }
         res.json({ success: true });
@@ -232,7 +267,6 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
         res.status(500).json({ error: "Server error saving tasks." });
     }
 });
-
 
 // --- 4. EXCEL PARSING HELPER FUNCTIONS ---
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
@@ -446,7 +480,7 @@ const extractSectionData = (workbook, section) => {
 
                 for (let c = 2; c < colsSpan; c++) {
                     const cell = row.getCell(targetCol + c);
-                    const subjectStr = getCellText(cell); 
+                    const subjectStr = getCellText(cell);
                     let slotTime = timeHeaders[c] ? timeHeaders[c].replace(/(\r\n|\n|\r)/gm, " ").trim() : 'Event';
 
                     if (slotTime.toLowerCase() === 'remarks') slotTime = 'Remarks / Event';
@@ -476,6 +510,22 @@ const extractSectionData = (workbook, section) => {
         }
     });
 
+    // NEW: compute a running "Session N" number per subject across the whole term for this section.
+    // Cancelled slots don't consume a session number; remarks/event rows are ignored entirely.
+    timetable.sort((a, b) => a.isoDate.localeCompare(b.isoDate));
+    const subjectSessionCounter = {};
+    timetable.forEach(dayEntry => {
+        dayEntry.classes.forEach(cls => {
+            const isRemark = cls.time && cls.time.toLowerCase().includes('remarks');
+            if (isRemark || !cls.subject) return;
+            if (cls.status === 'Cancelled') return;
+
+            const key = cls.subject.trim().toLowerCase();
+            subjectSessionCounter[key] = (subjectSessionCounter[key] || 0) + 1;
+            cls.sessionNumber = subjectSessionCounter[key];
+        });
+    });
+
     const summaryData = { headers: [], rows: [] };
     if (summaryStartIndex !== -1) {
         let actualTeachingCol = -1;
@@ -495,7 +545,7 @@ const extractSectionData = (workbook, section) => {
                 if (rowNumber > summaryStartIndex) {
                     const sessions = getCellText(row.getCell(1));
                     const credits = getCellText(row.getCell(2));
-                    const subject = getCellText(row.getCell(actualTeachingCol - 1)); 
+                    const subject = getCellText(row.getCell(actualTeachingCol - 1));
                     const actualTeaching = getCellText(row.getCell(actualTeachingCol));
                     const preMid = getCellText(row.getCell(actualTeachingCol + 1));
                     const postMid = getCellText(row.getCell(actualTeachingCol + 2));
@@ -518,8 +568,7 @@ let globalCache = {};
 let lastFetchTime = 0;
 let isFetching = false;
 let activeFetchPromise = null;
-const CACHE_TTL_MS = 5 * 60 * 1000; 
-const ALL_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 const updateCache = async () => {
     if (isFetching) return activeFetchPromise;
@@ -531,7 +580,7 @@ const updateCache = async () => {
             const response = await axios.get(SHEET_URL, { responseType: 'arraybuffer' });
             const workbook = new ExcelJS.Workbook();
             await workbook.xlsx.load(response.data);
-            
+
             const newCache = {};
             for (const sec of ALL_SECTIONS) {
                 const data = extractSectionData(workbook, sec);
@@ -554,24 +603,32 @@ const updateCache = async () => {
 };
 
 // --- 7. TIMETABLE API ---
+// NOTE: response now includes a `meta` block so the frontend can render the
+// "data is live, last synced at X, next sync at Y" banner and auto-refresh itself.
 app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     const section = req.params.section.toUpperCase();
     const forceRefresh = req.query.force === 'true';
 
+    const buildMeta = () => ({
+        lastFetchTime,
+        nextRefreshTime: lastFetchTime + CACHE_TTL_MS,
+        cacheTTLMs: CACHE_TTL_MS
+    });
+
     try {
         if (!forceRefresh && globalCache[section] && (Date.now() - lastFetchTime < CACHE_TTL_MS)) {
-            return res.json(globalCache[section]);
+            return res.json({ ...globalCache[section], meta: buildMeta() });
         }
         await updateCache();
         if (globalCache[section]) {
-            return res.json(globalCache[section]);
+            return res.json({ ...globalCache[section], meta: buildMeta() });
         } else {
             return res.status(404).json({ error: `Section ${section} not found in ERP data.` });
         }
     } catch (error) {
         if (globalCache[section]) {
             console.log(`[Fallback] Served stale cache for Section ${section} due to network error.`);
-            return res.json(globalCache[section]);
+            return res.json({ ...globalCache[section], meta: buildMeta() });
         }
         res.status(500).json({ error: 'Failed to fetch timetable data' });
     }
@@ -591,12 +648,12 @@ const pingServer = async () => {
     }
 };
 
-const PING_INTERVAL_MS = 240000; 
+const PING_INTERVAL_MS = 240000;
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     updateCache().catch(console.error);
-    setInterval(updateCache, CACHE_TTL_MS); 
-    setInterval(pingServer, PING_INTERVAL_MS); 
+    setInterval(updateCache, CACHE_TTL_MS);
+    setInterval(pingServer, PING_INTERVAL_MS);
 });

@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, CheckSquare, Square, Trash2, ChevronUp, ChevronDown, ListTodo } from 'lucide-react';
 
+// Todos are now stored as: todos[date][section][subject] = [ {id, text, isCompleted}, ... ]
+// The extra `section` level means Section A's notes for "OB" on a given date never mix
+// with Section B's notes for the same subject/date.
+
 export function TodoModal({ isOpen, onClose, activeClass, todos, onUpdate }) {
   const [newTask, setNewTask] = useState('');
 
@@ -13,24 +17,25 @@ export function TodoModal({ isOpen, onClose, activeClass, todos, onUpdate }) {
 
   if (!isOpen || !activeClass) return null;
 
-  const currentTodos = todos[activeClass.date]?.[activeClass.subject] || [];
+  const { date, section, subject } = activeClass;
+  const currentTodos = todos[date]?.[section]?.[subject] || [];
 
   const handleAddTask = (e) => {
     e.preventDefault();
     if (!newTask.trim()) return;
     const newTaskObj = { id: Date.now().toString(), text: newTask.trim(), isCompleted: false };
-    onUpdate(activeClass.date, activeClass.subject, [...currentTodos, newTaskObj]);
+    onUpdate(date, section, subject, [...currentTodos, newTaskObj]);
     setNewTask('');
   };
 
   const toggleTask = (taskId) => {
     const updated = currentTodos.map(t => t.id === taskId ? { ...t, isCompleted: !t.isCompleted } : t);
-    onUpdate(activeClass.date, activeClass.subject, updated);
+    onUpdate(date, section, subject, updated);
   };
 
   const deleteTask = (taskId) => {
     const updated = currentTodos.filter(t => t.id !== taskId);
-    onUpdate(activeClass.date, activeClass.subject, updated);
+    onUpdate(date, section, subject, updated);
   };
 
   return (
@@ -38,8 +43,10 @@ export function TodoModal({ isOpen, onClose, activeClass, todos, onUpdate }) {
       <div className="todo-bottom-sheet" onClick={e => e.stopPropagation()}>
         <div className="todo-sheet-header">
           <div>
-            <h3 className="todo-subject">{activeClass.subject}</h3>
-            <p className="todo-date">Tasks for {new Date(activeClass.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</p>
+            <h3 className="todo-subject">{subject}</h3>
+            <p className="todo-date">
+              Section {section} &middot; {new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+            </p>
           </div>
           <button className="todo-close-btn" onClick={onClose}><X size={24} /></button>
         </div>
@@ -63,10 +70,10 @@ export function TodoModal({ isOpen, onClose, activeClass, todos, onUpdate }) {
         </div>
 
         <form className="todo-input-form" onSubmit={handleAddTask}>
-          <input 
-            type="text" 
-            placeholder="Add a new task or note..." 
-            value={newTask} 
+          <input
+            type="text"
+            placeholder="Add a new task or note..."
+            value={newTask}
             onChange={(e) => setNewTask(e.target.value)}
           />
           <button type="submit" disabled={!newTask.trim()}><Plus size={20} /></button>
@@ -76,12 +83,12 @@ export function TodoModal({ isOpen, onClose, activeClass, todos, onUpdate }) {
   );
 }
 
-export function TodoSummaryBar({ date, todos, onOpenClass }) {
+export function TodoSummaryBar({ date, section, todos, onOpenClass }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const dayData = todos[date] || {};
+  const dayData = todos[date]?.[section] || {};
   const subjectsWithTasks = Object.keys(dayData);
-  
+
   let totalTasks = 0;
   let completedTasks = 0;
 
@@ -99,7 +106,7 @@ export function TodoSummaryBar({ date, todos, onOpenClass }) {
       <div className="todo-summary-header" onClick={() => setIsExpanded(!isExpanded)}>
         <div className="todo-summary-info">
           <ListTodo size={18} color="var(--accent-gold)" />
-          <span><strong>{completedTasks}/{totalTasks}</strong> Tasks for Today</span>
+          <span><strong>{completedTasks}/{totalTasks}</strong> Tasks for Today &middot; Sec {section}</span>
         </div>
         {isExpanded ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
       </div>
