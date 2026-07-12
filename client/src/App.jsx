@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Radio } from 'lucide-react';
+// Added Download and Share icons for the install prompts
+import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share } from 'lucide-react';
 import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 import { Analytics } from '@vercel/analytics/react';
 
@@ -83,6 +84,59 @@ function App() {
   // TODO STATE
   const [todos, setTodos] = useState({});
   const [activeTodoClass, setActiveTodoClass] = useState(null);
+
+  // --- PWA INSTALLATION STATE ---
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showIOSPrompt, setShowIOSPrompt] = useState(false);
+
+  useEffect(() => {
+    // Detect iOS devices for manual install instructions
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
+    const isStandalone = ('standalone' in window.navigator) && (window.navigator.standalone);
+
+    if (isIOSDevice && !isStandalone) {
+      setIsIOS(true);
+      setIsInstallable(true);
+    }
+
+    // Capture standard install prompt for Android/Desktop
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    // Hide button if successfully installed
+    window.addEventListener('appinstalled', () => {
+      setIsInstallable(false);
+      setDeferredPrompt(null);
+    });
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (isIOS) {
+      setShowIOSPrompt(true);
+      return;
+    }
+    if (!deferredPrompt) return;
+
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstallable(false);
+      setDeferredPrompt(null);
+    }
+  };
+  // -----------------------------
 
   const getTodayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -620,6 +674,23 @@ function App() {
     <>
       <style>{injectedStyles}</style>
 
+      {/* NEW: iOS Install Instructions Modal */}
+      {showIOSPrompt && (
+        <div className="modal-overlay" onClick={() => setShowIOSPrompt(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: 0 }}>Install on iOS</h3>
+            <p style={{ fontSize: '0.95rem', color: '#666', margin: '10px 0', lineHeight: '1.5' }}>
+              To install this app on your iPhone or iPad:<br/><br/>
+              1. Tap the <strong>Share</strong> button <Share size={16} style={{display: 'inline', verticalAlign: 'middle', margin: '0 2px'}}/> at the bottom of Safari.<br/>
+              2. Scroll down and select <strong>"Add to Home Screen"</strong>.
+            </p>
+            <div className="modal-actions">
+              <button className="btn-submit" onClick={() => setShowIOSPrompt(false)}>Got it</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showFeedbackModal && (
         <div className="modal-overlay" onClick={() => !isSubmitting && setShowFeedbackModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -635,7 +706,7 @@ function App() {
         </div>
       )}
 
-      {/* NEW: Settings modal — lets a student change & persist their section */}
+      {/* Settings modal — lets a student change & persist their section */}
       {showSettingsModal && (
         <div className="modal-overlay" onClick={() => setShowSettingsModal(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -708,6 +779,11 @@ function App() {
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {isInstallable && (
+                <button onClick={handleInstallClick} className="nav-btn" style={{ width: '100%', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
+                  <Download size={18} /> Install App
+                </button>
+              )}
               <button onClick={() => { setSettingsSectionDraft(section); setShowSettingsModal(true); }} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><Settings size={18} /> Settings</button>
               <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><MessageSquare size={18} /> Provide Feedback</button>
               <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>
@@ -729,7 +805,6 @@ function App() {
             <>
               {activeTab === 'timetable' && (
                 <>
-                  {/* NEW: Live-data banner */}
                   <div className="live-data-banner">
                     <span className="live-data-dot" />
                     <span><strong>Live data</strong> — synced directly from Excel, no need to refresh manually.</span>
@@ -794,7 +869,6 @@ function App() {
                                     <UserIcon size={14} /> {cls.prof}
                                   </div>
                                 )}
-                                {/* NEW: session number badge, e.g. "Session 2" for the 2nd occurrence of this subject */}
                                 {!isRemark && cls.sessionNumber && (
                                   <div className="session-badge">Session {cls.sessionNumber}</div>
                                 )}
