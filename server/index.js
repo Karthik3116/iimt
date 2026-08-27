@@ -314,7 +314,10 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 });
 
 
-// --- OLT SCRAPING ENGINE ---
+// ============================================================
+// OLT SCRAPING ENGINE (Fully replicating the Python logic)
+// ============================================================
+
 const activeScrapeSessions = new Map();
 const BASE_URL = "https://olt.iimtrichy.ac.in";
 const LOGIN_URL = `${BASE_URL}/Default.aspx`;
@@ -328,14 +331,27 @@ const SUBJECTS = [
 class OLTClient {
     constructor() {
         this.cookies = {};
-        this.client = axios.create({ validateStatus: () => true, maxRedirects: 0 });
+        this.client = axios.create({ 
+            validateStatus: () => true, 
+            maxRedirects: 0,
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Connection": "keep-alive"
+            }
+        });
     }
     
     updateCookies(headers) {
         if (headers['set-cookie']) {
             headers['set-cookie'].forEach(c => {
-                const parts = c.split(';')[0].split('=');
-                this.cookies[parts[0]] = parts.slice(1).join('=');
+                const cookieStr = c.split(';')[0];
+                const eqIndex = cookieStr.indexOf('=');
+                if(eqIndex > -1) {
+                    const key = cookieStr.substring(0, eqIndex);
+                    const val = cookieStr.substring(eqIndex + 1);
+                    this.cookies[key] = val;
+                }
             });
         }
     }
@@ -394,17 +410,47 @@ async function dropdownPostback(client, state, field, value) {
     data['__LASTFOCUS'] = '';
     data['__ASYNCPOST'] = 'true';
 
-    const headers = { 'Cache-Control': 'no-cache', 'X-MicrosoftAjax': 'Delta=true', 'X-Requested-With': 'XMLHttpRequest', 'Referer': ATTENDANCE_URL };
+    const headers = { 
+        'Cache-Control': 'no-cache', 
+        'X-MicrosoftAjax': 'Delta=true', 
+        'X-Requested-With': 'XMLHttpRequest', 
+        'Referer': ATTENDANCE_URL 
+    };
     const res = await client.post(ATTENDANCE_URL, data, headers);
     updateState(state, res.data);
     state[field] = value;
     return res.data;
 }
 
+// Mimic Python's manual table extraction to bypass ASP.NET Delta formatting issues
+function extractTableHtml(responseText) {
+    const TABLE_ID = "ctl00_Main_AttendanceReport_GridViewAttendanceMerged";
+    const marker = `id="${TABLE_ID}"`;
+    const position = responseText.indexOf(marker);
+    if (position < 0) return null;
+
+    const start = responseText.lastIndexOf("<table", position);
+    let end = responseText.indexOf("</table>", position);
+    if (start < 0 || end < 0) return null;
+    end += "</table>".length;
+
+    return responseText.substring(start, end);
+}
+
 function extractAttendance(html, rollNo) {
-    const $ = cheerio.load(html);
-    const table = $('#ctl00_Main_AttendanceReport_GridViewAttendanceMerged');
-    if (!table.length) return null;
+    let tableHtml = extractTableHtml(html);
+    let $;
+    let table;
+
+    if (tableHtml) {
+        $ = cheerio.load(tableHtml);
+        table = $('table').first();
+    } else {
+        $ = cheerio.load(html);
+        table = $('#ctl00_Main_AttendanceReport_GridViewAttendanceMerged');
+    }
+
+    if (!table || !table.length) return null;
 
     const rows = table.find('tr');
     if (rows.length < 2) return null;
@@ -414,14 +460,32 @@ function extractAttendance(html, rollNo) {
     
     for (let i = 2; i < headerCells.length - 2; i++) {
         const htmlContent = $(headerCells[i]).html() || '';
-        const parts = htmlContent.split(/<br\s*\/?>/i).map(s => cheerio.load(s).text().trim()).filter(Boolean);
-        classes.push({ class: parts[0] || '', date: parts[1] || '', time: parts[2] || '' });
+        const $cell = cheerio.load(htmlContent);
+        $cell('br').replaceWith('\n');
+        
+        const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
+        
+        if (parts.length >= 3) {
+            classes.push({ class: parts[0], date: parts[1], time: parts[2] });
+        } else {
+            const fullText = $cell.text().replace(/\s+/g, ' ').trim();
+            const match = fullText.match(/(\d+)\s+(\d{2}-\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+            if (match) {
+                classes.push({ class: match[1], date: match[2], time: match[3] });
+            } else {
+                classes.push({ class: fullText, date: '', time: '' });
+            }
+        }
     }
 
     let userRow = null;
     for (let i = 1; i < rows.length; i++) {
         const cells = $(rows[i]).find('td');
-        if ($(cells[0]).text().trim() === rollNo) { userRow = cells; break; }
+        const currentRoll = $(cells[0]).text().replace(/\s+/g, ' ').trim();
+        if (currentRoll === rollNo.trim()) { 
+            userRow = cells; 
+            break; 
+        }
     }
     if (!userRow) return null;
 
@@ -429,7 +493,8 @@ function extractAttendance(html, rollNo) {
     for (let i = 2; i < userRow.length - 2; i++) {
         const classInfo = classes[i - 2];
         if (!classInfo) break;
-        attendanceValues.push({ ...classInfo, status: $(userRow[i]).text().trim() });
+        const status = $(userRow[i]).text().replace(/\s+/g, ' ').trim();
+        attendanceValues.push({ ...classInfo, status });
     }
 
     const attended = parseInt($(userRow[userRow.length - 2]).text().trim(), 10) || 0;
@@ -442,7 +507,9 @@ function extractAttendance(html, rollNo) {
 app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
-        if (!user || !user.oltUsername || !user.oltPassword) return res.status(400).json({ error: 'No credentials saved' });
+        if (!user || !user.oltUsername || !user.oltPassword) {
+            return res.status(400).json({ error: 'No credentials saved' });
+        }
         
         const username = user.oltUsername;
         const password = decryptText(user.oltPassword);
@@ -454,20 +521,26 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
 
         state['ctl00$Login1$LoginView1$UserName'] = username;
         state['ctl00$Login1$LoginView1$Password'] = password;
+        state['ctl00$Login1$TextBoxIP'] = "";
+        state['ctl00$Login1$TextBoxOTP'] = "";
         state['ctl00$ToolkitScriptManager1'] = `ctl00$UpdatePanel1|ctl00$Login1$LoginView1$ButtonLogin`;
         state['__EVENTTARGET'] = 'ctl00$Login1$LoginView1$ButtonLogin';
+        state['__EVENTARGUMENT'] = '';
+        state['__LASTFOCUS'] = '';
         state['__ASYNCPOST'] = 'true';
 
         const loginRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
         const text = loginRes.data;
 
-        if (text.includes('TextBoxOTP') || text.includes('OTP')) {
+        if (text.includes('TextBoxOTP') || text.includes('OTP') || text.includes('Two-Factor')) {
             const otpState = parseFullForm((await client.get(LOGIN_URL, { 'Referer': LOGIN_URL })).data);
             activeScrapeSessions.set(req.user.id, { client, state: otpState, username, section, timestamp: Date.now() });
             return res.json({ requiresOtp: true });
         }
         
-        if (!text.includes('pageRedirect||')) return res.status(401).json({ error: 'Invalid OLT Credentials' });
+        if (!text.includes('pageRedirect||')) {
+            return res.status(401).json({ error: 'Invalid OLT Credentials' });
+        }
 
         return await completeScrape(client, section, username, res);
     } catch (error) {
@@ -505,11 +578,13 @@ async function completeScrape(client, section, username, res) {
         const state = parseFullForm(attendanceRes.data);
         
         const PROGRAM = "PGPM 2026-28", TERM = "Term-I";
-        if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName'] !== PROGRAM) 
+        if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName'] !== PROGRAM) {
             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName', PROGRAM);
+        }
             
-        if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM) 
+        if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM) {
             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM);
+        }
 
         const results = {};
         for (const subject of SUBJECTS) {
@@ -517,7 +592,9 @@ async function completeScrape(client, section, username, res) {
             const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
             
             const attendanceData = extractAttendance(sectionResHtml, username);
-            if (attendanceData) results[subject] = attendanceData;
+            if (attendanceData) {
+                results[subject] = attendanceData;
+            }
         }
 
         res.json({ success: true, results });
@@ -536,7 +613,10 @@ setInterval(() => {
 }, 60 * 1000);
 
 
-// --- 4. EXCEL PARSING HELPER FUNCTIONS ---
+// ============================================================
+// 4. EXCEL PARSING HELPER FUNCTIONS
+// ============================================================
+
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
 
 const getCellText = (cell) => {
@@ -594,7 +674,10 @@ const parseMergeRange = (rangeStr) => {
     };
 };
 
-// --- 5. CORE EXTRACTION LOGIC ---
+// ============================================================
+// 5. CORE EXTRACTION LOGIC (TIMETABLE)
+// ============================================================
+
 const extractSectionData = (workbook, section) => {
     let targetCol = null;
     let sectionEndCol = null;
@@ -829,7 +912,10 @@ const extractSectionData = (workbook, section) => {
     return { timetable, summary: summaryData };
 };
 
-// --- 6. BACKGROUND POLLING & IN-MEMORY CACHE ---
+// ============================================================
+// 6. BACKGROUND POLLING & IN-MEMORY CACHE
+// ============================================================
+
 let globalCache = {};
 let lastFetchTime = 0;
 let isFetching = false;
@@ -868,7 +954,10 @@ const updateCache = async () => {
     return activeFetchPromise;
 };
 
-// --- 7. TIMETABLE API ---
+// ============================================================
+// 7. TIMETABLE API
+// ============================================================
+
 app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     const section = req.params.section.toUpperCase();
     const forceRefresh = req.query.force === 'true';
@@ -898,7 +987,10 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     }
 });
 
-// --- 8. SELF-PING & DAEMON ---
+// ============================================================
+// 8. SELF-PING & DAEMON
+// ============================================================
+
 const PING_URL = process.env.PING_URL || "http://localhost:5000";
 let pingCount = 0;
 
