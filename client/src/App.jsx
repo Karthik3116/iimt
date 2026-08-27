@@ -627,24 +627,25 @@ function App() {
 
     /* --- ATTENDANCE UI --- */
     .attendance-container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.2rem; }
-    .creds-card { background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center; }
-    .input-group { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 1rem; }
-    .input-group input { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }
+    .creds-card { background: white; color: #333; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center; }
+    .creds-card h3 { color: #111; margin-top: 0; margin-bottom: 0.5rem; }
+    .input-group { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 1rem; color: #333; }
+    .input-group input { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; color: #333; background: #fff; }
     .input-group input:focus { outline: none; border-color: var(--accent-gold); }
     .attendance-summary-card { background: linear-gradient(135deg, #1e1e1e, #2d2d2d); color: white; padding: 1.5rem; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
     .summary-stat { text-align: center; }
     .summary-stat .value { font-size: 1.8rem; font-weight: bold; color: var(--accent-gold); }
-    .summary-stat .label { font-size: 0.8rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 1px; }
-    .subject-card { background: white; border-radius: 10px; border: 1px solid #eee; overflow: hidden; transition: all 0.2s; }
-    .subject-header { padding: 1rem 1.2rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: #fafafa; }
+    .summary-stat .label { font-size: 0.8rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 1px; color: #eee; }
+    .subject-card { background: white; color: #333; border-radius: 10px; border: 1px solid #eee; overflow: hidden; transition: all 0.2s; }
+    .subject-header { padding: 1rem 1.2rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: #fafafa; border-bottom: 1px solid transparent; }
     .subject-header:hover { background: #f0f0f0; }
-    .subject-title { font-weight: 600; font-size: 0.95rem; flex: 1; }
-    .subject-stats { display: flex; align-items: center; gap: 15px; font-size: 0.9rem; }
-    .progress-bar { width: 60px; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+    .subject-title { font-weight: 700; font-size: 0.95rem; flex: 1; color: #111; }
+    .subject-stats { display: flex; align-items: center; gap: 15px; font-size: 0.9rem; color: #444; }
+    .progress-bar { width: 60px; height: 6px; background: #ddd; border-radius: 3px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 3px; }
-    .class-list { padding: 0 1.2rem; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+    .class-list { padding: 0 1.2rem; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; background: #fff; }
     .class-list.expanded { max-height: 500px; padding: 1rem 1.2rem; overflow-y: auto; border-top: 1px solid #eee; }
-    .class-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 0.85rem; color: #555; }
+    .class-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 0.85rem; color: #444; }
     .class-row:last-child { border-bottom: none; }
     .status-badge { padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
     .status-p { background: rgba(76, 175, 80, 0.1); color: #2e7d32; }
@@ -755,7 +756,7 @@ function App() {
                 <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
                   <div className="subject-title">{subject}</div>
                   <div className="subject-stats">
-                    <span style={{ fontWeight: 'bold' }}>{data.attended}/{data.total}</span>
+                    <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
                     <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: color }}></div></div>
                     <span style={{ color, fontWeight: 'bold', width: '45px', textAlign: 'right' }}>{data.percentage}%</span>
                     {isExp ? <ChevronUp size={16} color="#888"/> : <ChevronDown size={16} color="#888"/>}
