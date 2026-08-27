@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff, X, Sparkles } from 'lucide-react';
 import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 import { Analytics } from '@vercel/analytics/react';
 
@@ -17,6 +17,9 @@ const SWIPE_HINT_MAX_SHOWS = 3;
 const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
 const SWIPE_HINT_AUTO_DISMISS_MS = 3200;
 const SECTION_STORAGE_KEY = 'iimt_section';
+
+const BANNER_STORAGE_KEY = 'iimt_attendance_banner_dismissed';
+const BANNER_START_KEY = 'iimt_attendance_banner_start';
 
 axios.interceptors.response.use(
   (response) => response,
@@ -86,6 +89,8 @@ function App() {
   const [otpRequired, setOtpRequired] = useState(false);
   const [expandedSubject, setExpandedSubject] = useState(null);
 
+  const [showFeatureBanner, setShowFeatureBanner] = useState(false);
+
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [isInstallable, setIsInstallable] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -117,6 +122,48 @@ function App() {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     };
   }, []);
+
+  // --- NEW: Feature Banner 5-Day Logic ---
+  useEffect(() => {
+    if (!user) return;
+    const dismissed = localStorage.getItem(BANNER_STORAGE_KEY);
+    if (dismissed === 'true') return;
+
+    let startTime = localStorage.getItem(BANNER_START_KEY);
+    if (!startTime) {
+      startTime = Date.now().toString();
+      localStorage.setItem(BANNER_START_KEY, startTime);
+    }
+
+    const elapsedDays = (Date.now() - parseInt(startTime, 10)) / (1000 * 60 * 60 * 24);
+    if (elapsedDays < 5) {
+      setShowFeatureBanner(true);
+    } else {
+      setShowFeatureBanner(false);
+    }
+  }, [user]);
+
+  const dismissFeatureBanner = () => {
+    localStorage.setItem(BANNER_STORAGE_KEY, 'true');
+    setShowFeatureBanner(false);
+  };
+
+  const handleShareApp = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'IIM Trichy PGPM Portal',
+          text: 'Check out this awesome app to track your live timetable and OLT attendance in one place!',
+          url: window.location.origin,
+        });
+      } catch (err) {
+        console.log('Share canceled or failed', err);
+      }
+    } else {
+      navigator.clipboard.writeText(window.location.origin);
+      alert('App link copied to clipboard!');
+    }
+  };
 
   const handleInstallClick = async () => {
     if (isIOS) {
@@ -492,6 +539,9 @@ function App() {
 
       .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
       .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
+      
+      .feature-banner-actions { flex-direction: column; width: 100%; }
+      .feature-banner-actions button { width: 100%; justify-content: center; }
     }
 
     /* --- SATISFYING LOADER ANIMATION --- */
@@ -551,6 +601,19 @@ function App() {
     .settings-section-btn { padding: 10px 0; border-radius: 8px; border: 1px solid #ddd; background: #fafafa; color: #333; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
     .settings-section-btn.active { background: var(--accent-gold); border-color: var(--accent-gold); color: #fff; }
     .settings-status-text { font-size: 0.85rem; color: var(--accent-gold); font-weight: 600; }
+
+    /* --- FEATURE BANNER --- */
+    .feature-banner { background: linear-gradient(135deg, rgba(219, 163, 21, 0.12), rgba(219, 163, 21, 0.04)); border: 1px solid rgba(219, 163, 21, 0.25); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 10px; color: var(--text-primary, #fff); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    .feature-banner-header { display: flex; justify-content: space-between; align-items: flex-start; }
+    .feature-banner-title { font-size: 1.1rem; font-weight: 700; color: var(--accent-gold); display: flex; align-items: center; gap: 8px; margin: 0; }
+    .feature-banner-text { font-size: 0.9rem; color: #d0d0d0; margin: 0; line-height: 1.5; }
+    .feature-banner-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 5px; }
+    .btn-banner-primary { background: var(--accent-gold); color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; transition: background 0.2s;}
+    .btn-banner-primary:hover { background: #c59212; }
+    .btn-banner-secondary { background: rgba(255,255,255,0.05); color: #ddd; border: 1px solid rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 8px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; transition: all 0.2s;}
+    .btn-banner-secondary:hover { background: rgba(255,255,255,0.1); color: #fff;}
+    .btn-banner-close { background: none; border: none; color: #888; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: all 0.2s;}
+    .btn-banner-close:hover { background: rgba(255,255,255,0.1); color: #fff;}
 
     /* --- LIVE DATA BANNER --- */
     .live-data-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.25); color: #2f6b32; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; margin-bottom: 1rem; }
@@ -910,6 +973,35 @@ function App() {
 
           {!loading && !error && (
             <>
+              {/* --- 5-DAY FEATURE BANNER --- */}
+              {showFeatureBanner && activeTab !== 'attendance' && (
+                <div className="feature-banner fade-in">
+                  <div className="feature-banner-header">
+                    <h3 className="feature-banner-title">
+                      <Sparkles size={18} fill="currentColor" /> 
+                      New: Live OLT Attendance
+                    </h3>
+                    <button className="btn-banner-close" onClick={dismissFeatureBanner} aria-label="Close">
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <p className="feature-banner-text">
+                    You can now track your live class attendance and view detailed class-by-class status directly from the OLT portal!
+                  </p>
+                  <div className="feature-banner-actions">
+                    <button className="btn-banner-primary" onClick={() => setActiveTab('attendance')}>
+                      <ClipboardCheck size={16} /> Check it out
+                    </button>
+                    <button className="btn-banner-secondary" onClick={handleShareApp}>
+                      <Share size={16} /> Share App
+                    </button>
+                    <button className="btn-banner-secondary" onClick={() => setShowFeedbackModal(true)}>
+                      <MessageSquare size={16} /> Give Feedback
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'attendance' && renderAttendanceTab()}
 
               {activeTab === 'timetable' && (
@@ -1171,12 +1263,10 @@ function AdminPortal({ injectedStyles }) {
 }
 
 export default App;
-
 // import React, { useState, useEffect, useRef } from 'react';
 // import axios from 'axios';
 // import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-// // Added Download and Share icons for the install prompts
-// import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share } from 'lucide-react';
+// import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff } from 'lucide-react';
 // import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 // import { Analytics } from '@vercel/analytics/react';
 
@@ -1186,13 +1276,12 @@ export default App;
 // const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
 
 // const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
-// // const API_BASE_URL =  'http://localhost:5000';
 
 // const SWIPE_THRESHOLD = 40;
 // const SWIPE_HINT_MAX_SHOWS = 3;
 // const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
 // const SWIPE_HINT_AUTO_DISMISS_MS = 3200;
-// const SECTION_STORAGE_KEY = 'iimt_section'; // NEW: persists the student's last-picked section
+// const SECTION_STORAGE_KEY = 'iimt_section';
 
 // axios.interceptors.response.use(
 //   (response) => response,
@@ -1210,11 +1299,8 @@ export default App;
 // function App() {
 //   const [user, setUser] = useState(null);
 //   const [authError, setAuthError] = useState('');
-
 //   const [activeTab, setActiveTab] = useState('timetable');
 
-//   // NEW: initialize section synchronously from localStorage so there's no
-//   // flash/glitch of the wrong section's timetable before the saved value loads.
 //   const [section, setSection] = useState(() => {
 //     const stored = localStorage.getItem(SECTION_STORAGE_KEY);
 //     return stored && SECTIONS.includes(stored) ? stored : 'A';
@@ -1246,27 +1332,31 @@ export default App;
 //   const [feedbackStatus, setFeedbackStatus] = useState('');
 //   const [isSubmitting, setIsSubmitting] = useState(false);
 
-//   // NEW: Settings modal (lets a student change/persist their section)
 //   const [showSettingsModal, setShowSettingsModal] = useState(false);
 //   const [settingsSectionDraft, setSettingsSectionDraft] = useState(section);
 //   const [settingsStatus, setSettingsStatus] = useState('');
 
-//   // NEW: live-sync metadata (when the Excel data was last pulled / will next refresh)
 //   const [syncMeta, setSyncMeta] = useState({ lastFetchTime: null, nextRefreshTime: null, cacheTTLMs: null });
-//   const [nowTick, setNowTick] = useState(Date.now()); // ticks so the banner countdown stays live
+//   const [nowTick, setNowTick] = useState(Date.now());
 
-//   // TODO STATE
 //   const [todos, setTodos] = useState({});
 //   const [activeTodoClass, setActiveTodoClass] = useState(null);
 
-//   // --- PWA INSTALLATION STATE ---
+//   // --- ATTENDANCE STATE ---
+//   const [hasOltCreds, setHasOltCreds] = useState(false);
+//   const [attendanceData, setAttendanceData] = useState(null);
+//   const [isFetchingAttendance, setIsFetchingAttendance] = useState(false);
+//   const [attendanceError, setAttendanceError] = useState('');
+//   const [showCredsForm, setShowCredsForm] = useState(false);
+//   const [otpRequired, setOtpRequired] = useState(false);
+//   const [expandedSubject, setExpandedSubject] = useState(null);
+
 //   const [deferredPrompt, setDeferredPrompt] = useState(null);
 //   const [isInstallable, setIsInstallable] = useState(false);
 //   const [isIOS, setIsIOS] = useState(false);
 //   const [showIOSPrompt, setShowIOSPrompt] = useState(false);
 
 //   useEffect(() => {
-//     // Detect iOS devices for manual install instructions
 //     const userAgent = window.navigator.userAgent.toLowerCase();
 //     const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
 //     const isStandalone = ('standalone' in window.navigator) && (window.navigator.standalone);
@@ -1276,7 +1366,6 @@ export default App;
 //       setIsInstallable(true);
 //     }
 
-//     // Capture standard install prompt for Android/Desktop
 //     const handleBeforeInstallPrompt = (e) => {
 //       e.preventDefault();
 //       setDeferredPrompt(e);
@@ -1284,8 +1373,6 @@ export default App;
 //     };
 
 //     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-//     // Hide button if successfully installed
 //     window.addEventListener('appinstalled', () => {
 //       setIsInstallable(false);
 //       setDeferredPrompt(null);
@@ -1310,47 +1397,34 @@ export default App;
 //       setDeferredPrompt(null);
 //     }
 //   };
-//   // -----------------------------
 
 //   const getTodayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-
-//   const getFallbackAvatar = (name) => {
-//     return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'User')}&background=dba315&color=fff`;
-//   };
+//   const getFallbackAvatar = (name) => `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'User')}&background=dba315&color=fff`;
 
 //   const fetchUserTodos = async (token) => {
 //     try {
-//       const res = await axios.get(`${API_BASE_URL}/api/todos`, {
-//         headers: { Authorization: `Bearer ${token}` }
-//       });
+//       const res = await axios.get(`${API_BASE_URL}/api/todos`, { headers: { Authorization: `Bearer ${token}` } });
 //       setTodos(res.data);
-//     } catch (err) {
-//       console.error("Failed to fetch todos from DB", err);
-//     }
+//     } catch (err) { console.error("Failed to fetch todos", err); }
 //   };
 
-//   // NEW: pull the student's saved section preference from the server and apply it
 //   const fetchUserProfile = async (token) => {
 //     try {
-//       const res = await axios.get(`${API_BASE_URL}/api/user/me`, {
-//         headers: { Authorization: `Bearer ${token}` }
-//       });
+//       const res = await axios.get(`${API_BASE_URL}/api/user/me`, { headers: { Authorization: `Bearer ${token}` } });
 //       const savedSection = res.data?.user?.defaultSection;
+//       setHasOltCreds(res.data?.user?.hasOltCreds || false);
 //       if (savedSection && SECTIONS.includes(savedSection)) {
 //         setSection(savedSection);
 //         localStorage.setItem(SECTION_STORAGE_KEY, savedSection);
 //       }
-//     } catch (err) {
-//       console.error("Failed to fetch user profile", err);
-//     }
+//     } catch (err) { console.error("Failed to fetch user profile", err); }
 //   };
 
 //   useEffect(() => {
 //     const storedUser = localStorage.getItem('iimt_user');
 //     const storedToken = localStorage.getItem('iimt_token');
 //     if (storedUser && storedToken) {
-//       const parsedUser = JSON.parse(storedUser);
-//       setUser(parsedUser);
+//       setUser(JSON.parse(storedUser));
 //       fetchUserTodos(storedToken);
 //       fetchUserProfile(storedToken);
 //     } else {
@@ -1359,23 +1433,17 @@ export default App;
 //     }
 //   }, []);
 
-//   // NEW: keep localStorage in sync whenever the section changes, and push the
-//   // change to the server so it's remembered for this student on any device.
 //   useEffect(() => {
 //     localStorage.setItem(SECTION_STORAGE_KEY, section);
 //     setSettingsSectionDraft(section);
 //     if (user) {
 //       const token = localStorage.getItem('iimt_token');
-//       axios.post(`${API_BASE_URL}/api/user/section`, { section }, {
-//         headers: { Authorization: `Bearer ${token}` }
-//       }).catch((err) => console.error("Failed to save section preference", err));
+//       axios.post(`${API_BASE_URL}/api/user/section`, { section }, { headers: { Authorization: `Bearer ${token}` } })
+//         .catch(err => console.error("Failed to save section", err));
 //     }
-//     // eslint-disable-next-line react-hooks/exhaustive-deps
 //   }, [section, user]);
 
-//   // OPTIMISTIC SYNC LOGIC — todos are now keyed date -> section -> subject
 //   const handleUpdateTodos = async (date, sec, subject, newTodoList) => {
-//     // 1. Optimistic Update (UI updates instantly)
 //     setTodos(prev => {
 //       const updated = { ...prev };
 //       if (!updated[date]) updated[date] = {};
@@ -1389,21 +1457,17 @@ export default App;
 //       return updated;
 //     });
 
-//     // 2. Background DB Sync
 //     try {
 //       const token = localStorage.getItem('iimt_token');
 //       await axios.post(`${API_BASE_URL}/api/todos`,
 //         { date, section: sec, subject, tasks: newTodoList },
 //         { headers: { Authorization: `Bearer ${token}` } }
 //       );
-//     } catch (err) {
-//       console.error("Failed to sync todo update to server", err);
-//     }
+//     } catch (err) { console.error("Failed to sync todo", err); }
 //   };
 
 //   useEffect(() => {
 //     if (user) fetchTimetable(section);
-//     // eslint-disable-next-line react-hooks/exhaustive-deps
 //   }, [section, user]);
 
 //   useEffect(() => {
@@ -1412,12 +1476,8 @@ export default App;
 //     };
 //     document.addEventListener('visibilitychange', handleVisibilityChange);
 //     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-//     // eslint-disable-next-line react-hooks/exhaustive-deps
 //   }, [user, section]);
 
-//   // NEW: auto-refresh once the server's cache TTL window has elapsed, so the
-//   // page pulls fresh Excel data automatically while it stays open — no manual
-//   // "Sync Data" click required.
 //   useEffect(() => {
 //     if (!user || !syncMeta.nextRefreshTime) return;
 //     const interval = setInterval(() => {
@@ -1427,7 +1487,6 @@ export default App;
 //       }
 //     }, 15000);
 //     return () => clearInterval(interval);
-//     // eslint-disable-next-line react-hooks/exhaustive-deps
 //   }, [user, section, syncMeta.nextRefreshTime]);
 
 //   useEffect(() => {
@@ -1459,17 +1518,13 @@ export default App;
 //       setAuthError('');
 //       const res = await axios.post(`${API_BASE_URL}/api/auth/google`, { token: credentialResponse.credential });
 
-//       const loggedInUser = res.data.user;
-//       const sessionToken = res.data.token;
+//       setUser(res.data.user);
+//       setHasOltCreds(res.data.user.hasOltCreds);
+//       localStorage.setItem('iimt_user', JSON.stringify(res.data.user));
+//       localStorage.setItem('iimt_token', res.data.token);
 
-//       setUser(loggedInUser);
-//       localStorage.setItem('iimt_user', JSON.stringify(loggedInUser));
-//       localStorage.setItem('iimt_token', sessionToken);
-
-//       // Fetch fresh todos + saved section preference for newly logged in user
-//       fetchUserTodos(sessionToken);
-//       fetchUserProfile(sessionToken);
-
+//       fetchUserTodos(res.data.token);
+//       fetchUserProfile(res.data.token);
 //     } catch (err) {
 //       if (err.response?.status === 429) setAuthError(err.response.data.error || 'Too many attempts. Try again later.');
 //       else setAuthError(err.response?.data?.error || 'Authentication failed. Please try again.');
@@ -1543,6 +1598,46 @@ export default App;
 //     }
 //   };
 
+//   const fetchAttendance = async () => {
+//     setIsFetchingAttendance(true);
+//     setAttendanceError('');
+//     setOtpRequired(false);
+//     try {
+//       const token = localStorage.getItem('iimt_token');
+//       const res = await axios.post(`${API_BASE_URL}/api/attendance/fetch`, {}, { headers: { Authorization: `Bearer ${token}` }});
+//       if (res.data.requiresOtp) {
+//           setOtpRequired(true);
+//       } else {
+//           setAttendanceData(res.data.results);
+//       }
+//     } catch (err) {
+//       setAttendanceError(err.response?.data?.error || 'Failed to fetch attendance from OLT.');
+//     } finally { setIsFetchingAttendance(false); }
+//   };
+
+//   const verifyOtp = async (otp) => {
+//     setIsFetchingAttendance(true);
+//     setAttendanceError('');
+//     try {
+//       const token = localStorage.getItem('iimt_token');
+//       const res = await axios.post(`${API_BASE_URL}/api/attendance/verify-otp`, { otp }, { headers: { Authorization: `Bearer ${token}` }});
+//       setAttendanceData(res.data.results);
+//       setOtpRequired(false);
+//     } catch (err) {
+//       setAttendanceError(err.response?.data?.error || 'Invalid OTP');
+//     } finally { setIsFetchingAttendance(false); }
+//   };
+
+//   const saveCredentials = async (username, password) => {
+//     try {
+//       const token = localStorage.getItem('iimt_token');
+//       await axios.post(`${API_BASE_URL}/api/user/olt-credentials`, { username, password }, { headers: { Authorization: `Bearer ${token}` }});
+//       setHasOltCreds(true);
+//       setShowCredsForm(false);
+//       fetchAttendance();
+//     } catch (err) { alert('Failed to securely save credentials.'); }
+//   };
+
 //   const handleSyncData = () => {
 //     setCache({});
 //     fetchTimetable(section, true, false);
@@ -1577,10 +1672,9 @@ export default App;
 //     }
 //   };
 
-//   // NEW: Settings modal save handler
 //   const saveSectionSetting = () => {
 //     setSettingsStatus('Saved!');
-//     setSection(settingsSectionDraft); // triggers persistence effect + timetable refetch
+//     setSection(settingsSectionDraft);
 //     setTimeout(() => {
 //       setShowSettingsModal(false);
 //       setSettingsStatus('');
@@ -1595,13 +1689,11 @@ export default App;
 //     return `${dayString}, ${formatted}`;
 //   };
 
-//   // NEW: format an epoch ms timestamp as a local (IST-friendly) HH:MM time string
 //   const formatClockTime = (ts) => {
 //     if (!ts) return '--:--';
 //     return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 //   };
 
-//   // NEW: minutes remaining until the next automatic data refresh
 //   const minutesToNextRefresh = () => {
 //     if (!syncMeta.nextRefreshTime) return null;
 //     const diffMs = syncMeta.nextRefreshTime - nowTick;
@@ -1663,7 +1755,6 @@ export default App;
 //       .mobile-swipe-hint { display: flex !important; }
 //       .swipe-tutorial-overlay { display: flex !important; }
 
-//       /* Collapse admin sidebar on very small screens */
 //       .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
 //       .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
 //     }
@@ -1710,11 +1801,7 @@ export default App;
 //     .swipe-tutorial-dismiss { color: rgba(255, 255, 255, 0.55); font-size: 0.75rem; font-weight: 500; margin-top: 0.15rem; }
 
 //     /* --- FIX: FORCED TEXT VISIBILITY ON ALL INPUTS & TEXTAREAS --- */
-//     .modal-content textarea, .admin-login input, .todo-input-form input {
-//       color: #333 !important;
-//       background-color: #fff !important;
-//     }
-
+//     .modal-content textarea, .admin-login input, .todo-input-form input { color: #333 !important; background-color: #fff !important; }
 //     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
 //     .modal-content { background: white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; color: #333; }
 //     .modal-content textarea { width: 100%; height: 100px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: inherit; resize: none; }
@@ -1724,20 +1811,20 @@ export default App;
 //     .btn-cancel { background: #eee; color: #333; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
 //     .btn-cancel:disabled { background: #f5f5f5; color: #999; cursor: not-allowed; }
 
-//     /* --- NEW: SETTINGS MODAL --- */
+//     /* --- SETTINGS MODAL --- */
 //     .settings-section-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 //     .settings-section-btn { padding: 10px 0; border-radius: 8px; border: 1px solid #ddd; background: #fafafa; color: #333; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
 //     .settings-section-btn.active { background: var(--accent-gold); border-color: var(--accent-gold); color: #fff; }
 //     .settings-status-text { font-size: 0.85rem; color: var(--accent-gold); font-weight: 600; }
 
-//     /* --- NEW: LIVE DATA BANNER --- */
+//     /* --- LIVE DATA BANNER --- */
 //     .live-data-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.25); color: #2f6b32; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; margin-bottom: 1rem; }
 //     .live-data-dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; box-shadow: 0 0 0 rgba(76, 175, 80, 0.5); animation: liveDotPulse 1.8s infinite; flex-shrink: 0; }
 //     @keyframes liveDotPulse { 0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5); } 70% { box-shadow: 0 0 0 6px rgba(76, 175, 80, 0); } 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); } }
 //     .live-data-banner strong { font-weight: 700; }
 //     .live-data-meta { color: #4a7a4c; opacity: 0.85; }
 
-//     /* --- NEW: SESSION NUMBER BADGE --- */
+//     /* --- SESSION NUMBER BADGE --- */
 //     .session-badge { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.3px; color: var(--accent-gold); background: rgba(219, 163, 21, 0.12); border: 1px solid rgba(219, 163, 21, 0.3); border-radius: 6px; padding: 2px 8px; margin-top: 6px; display: inline-block; }
 
 //     /* --- TO-DO WIDGET STYLES --- */
@@ -1745,22 +1832,17 @@ export default App;
 //     .add-task-btn { background: rgba(219, 163, 21, 0.1); border: 1px solid rgba(219, 163, 21, 0.3); border-radius: 8px; padding: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--accent-gold); position: relative; transition: all 0.2s ease; }
 //     .add-task-btn:hover { background: rgba(219, 163, 21, 0.2); }
 //     .task-indicator { position: absolute; top: -3px; right: -3px; background: red; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid white; }
-
 //     .todo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 2000; display: flex; align-items: flex-end; justify-content: center; animation: fadeOverlay 0.3s ease; }
 //     @keyframes fadeOverlay { from { opacity: 0; } to { opacity: 1; } }
-
 //     .todo-bottom-sheet { background: white; width: 100%; max-width: 600px; border-radius: 20px 20px 0 0; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; box-shadow: 0 -4px 20px rgba(0,0,0,0.15); animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; max-height: 80vh; color: #333; }
 //     @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-
 //     .todo-sheet-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 1rem; }
 //     .todo-subject { margin: 0; font-size: 1.2rem; color: #333; }
 //     .todo-date { margin: 4px 0 0 0; font-size: 0.85rem; color: #888; }
 //     .todo-close-btn { background: none; border: none; padding: 4px; cursor: pointer; color: #666; border-radius: 50%; display: flex; }
 //     .todo-close-btn:hover { background: #f5f5f5; }
-
 //     .todo-list-container { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
 //     .todo-empty { text-align: center; color: #aaa; font-style: italic; padding: 2rem 0; font-size: 0.9rem; }
-
 //     .todo-item { display: flex; align-items: center; gap: 12px; background: #f9f9f9; padding: 12px; border-radius: 8px; border: 1px solid #eee; transition: all 0.2s; color: #333;}
 //     .todo-item.completed { opacity: 0.6; }
 //     .todo-item.completed .todo-text { text-decoration: line-through; color: #888; }
@@ -1768,13 +1850,11 @@ export default App;
 //     .todo-text { flex: 1; font-size: 0.95rem; word-break: break-word; }
 //     .todo-delete-btn { background: none; border: none; color: #ff4d4f; padding: 6px; cursor: pointer; border-radius: 6px; display: flex; }
 //     .todo-delete-btn:hover { background: #fff1f0; }
-
 //     .todo-input-form { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #eee; }
 //     .todo-input-form input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; outline: none; }
 //     .todo-input-form input:focus { border-color: var(--accent-gold); }
 //     .todo-input-form button { background: var(--accent-gold); color: white; border: none; padding: 0 16px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 //     .todo-input-form button:disabled { background: #e0c88b; cursor: not-allowed; }
-
 //     .todo-summary-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: white; box-shadow: 0 -4px 12px rgba(0,0,0,0.1); border-radius: 16px 16px 0 0; z-index: 100; display: flex; flex-direction: column; transition: max-height 0.3s ease; max-height: 60px; overflow: hidden; color: #333; }
 //     @media (min-width: 769px) { .todo-summary-bar { width: calc(100% - 260px); left: 260px; } }
 //     .todo-summary-bar.expanded { max-height: 40vh; }
@@ -1788,32 +1868,53 @@ export default App;
 //     .todo-summary-item.completed { opacity: 0.5; text-decoration: line-through; }
 //     .todo-summary-text { flex: 1; word-break: break-word; line-height: 1.4; margin-top: -1px; }
 
-//     /* --- NEW ADMIN PORTAL DASHBOARD LAYOUT --- */
+//     /* --- ADMIN PORTAL DASHBOARD LAYOUT --- */
 //     .admin-container-fluid { font-family: sans-serif; color: #333; height: 100vh; background: #f5f5f5;}
 //     .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff;}
 //     .admin-login input { padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc; }
 //     .admin-login button { background: var(--accent-gold); color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }
-
 //     .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; }
 //     .admin-sidebar { width: 300px; background: white; border-right: 1px solid #eee; display: flex; flex-direction: column; }
 //     .admin-sidebar-header { padding: 1.5rem; border-bottom: 1px solid #eee; }
 //     .admin-sidebar-content { flex: 1; overflow-y: auto; padding: 1rem; }
-
 //     .admin-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fafafa;}
 //     .admin-main-header { padding: 1.5rem; border-bottom: 1px solid #eee; background: white; display: flex; justify-content: space-between; align-items: center;}
 //     .admin-main-content { flex: 1; overflow-y: auto; padding: 1.5rem; }
-
 //     .active-user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 8px; transition: background 0.2s;}
 //     .active-user-card:hover { background: #f9f9f9; }
 //     .active-user-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
 //     .active-user-info { flex: 1; overflow: hidden; }
 //     .active-user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 //     .active-user-time { font-size: 0.75rem; color: #666; }
-
 //     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
 //     .status-dot.online { background: #4caf50; box-shadow: 0 0 5px rgba(76, 175, 80, 0.4); }
-
 //     .feedback-card { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid var(--accent-gold); color: #333; box-shadow: 0 2px 8px rgba(0,0,0,0.05);}
+
+//     /* --- ATTENDANCE UI --- */
+//     .attendance-container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.2rem; }
+//     .creds-card { background: white; color: #333; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 15px rgba(0,0,0,0.05); text-align: center; }
+//     .creds-card h3 { color: #111; margin-top: 0; margin-bottom: 0.5rem; }
+//     .input-group { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 1rem; color: #333; }
+//     .input-group input { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; color: #333; background: #fff; }
+//     .input-group input:focus { outline: none; border-color: var(--accent-gold); }
+//     .attendance-summary-card { background: linear-gradient(135deg, #1e1e1e, #2d2d2d); color: white; padding: 1.5rem; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+//     .summary-stat { text-align: center; }
+//     .summary-stat .value { font-size: 1.8rem; font-weight: bold; color: var(--accent-gold); }
+//     .summary-stat .label { font-size: 0.8rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 1px; color: #eee; }
+//     .subject-card { background: white; color: #333; border-radius: 10px; border: 1px solid #eee; overflow: hidden; transition: all 0.2s; }
+//     .subject-header { padding: 1rem 1.2rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: #fafafa; border-bottom: 1px solid transparent; }
+//     .subject-header:hover { background: #f0f0f0; }
+//     .subject-title { font-weight: 700; font-size: 0.95rem; flex: 1; color: #111; }
+//     .subject-stats { display: flex; align-items: center; gap: 15px; font-size: 0.9rem; color: #444; }
+//     .progress-bar { width: 60px; height: 6px; background: #ddd; border-radius: 3px; overflow: hidden; }
+//     .progress-fill { height: 100%; border-radius: 3px; }
+//     .class-list { padding: 0 1.2rem; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; background: #fff; }
+//     .class-list.expanded { max-height: 500px; padding: 1rem 1.2rem; overflow-y: auto; border-top: 1px solid #eee; }
+//     .class-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 0.85rem; color: #444; }
+//     .class-row:last-child { border-bottom: none; }
+//     .status-badge { padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+//     .status-p { background: rgba(76, 175, 80, 0.1); color: #2e7d32; }
+//     .status-a { background: rgba(244, 67, 54, 0.1); color: #d32f2f; }
 //   `;
 
 //   if (window.location.pathname === '/admin') {
@@ -1844,11 +1945,112 @@ export default App;
 
 //   const nextRefreshMins = minutesToNextRefresh();
 
+//   const renderAttendanceTab = () => {
+//     if (!hasOltCreds || showCredsForm) {
+//       return <CredentialForm onSubmit={saveCredentials} onCancel={() => setShowCredsForm(false)} hasCreds={hasOltCreds} />;
+//     }
+
+//     if (otpRequired) {
+//       return <OTPForm onSubmit={verifyOtp} isLoading={isFetchingAttendance} />;
+//     }
+
+//     if (!attendanceData && !isFetchingAttendance) {
+//       return (
+//         <div className="empty-state">
+//           <ClipboardCheck size={48} color="var(--accent-gold)" style={{ opacity: 0.5, marginBottom: '1rem' }} />
+//           <h3>View Your Attendance</h3>
+//           <p>Sync your live attendance directly from the OLT portal.</p>
+//           <button className="btn-submit" onClick={fetchAttendance} style={{ marginTop: '1rem' }}>Fetch Now</button>
+//           <button className="btn-cancel" onClick={() => setShowCredsForm(true)} style={{ marginTop: '1rem', marginLeft: '10px' }}>Update Credentials</button>
+//         </div>
+//       );
+//     }
+
+//     if (isFetchingAttendance) {
+//       return (
+//         <div className="satisfying-loader-container">
+//           <div className="dot-wave"><div className="dot"></div><div className="dot"></div><div className="dot"></div></div>
+//           <div className="loading-text">Connecting to OLT Portal...</div>
+//         </div>
+//       );
+//     }
+
+//     let overallAttended = 0;
+//     let overallTotal = 0;
+//     Object.values(attendanceData || {}).forEach(sub => {
+//       overallAttended += sub.attended;
+//       overallTotal += sub.total;
+//     });
+//     const overallPercentage = overallTotal > 0 ? ((overallAttended / overallTotal) * 100).toFixed(1) : 0;
+
+//     return (
+//       <div className="attendance-container">
+//         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+//            <h2 className="view-title" style={{ margin: 0 }}>Attendance Overview</h2>
+//            <div>
+//              <button onClick={fetchAttendance} className="nav-btn" style={{ margin: 0, padding: '8px 12px', border: '1px solid #ddd' }}><RefreshCw size={14}/> Sync</button>
+//            </div>
+//         </div>
+
+//         {attendanceError && (
+//           <div style={{ background: '#fff1f0', color: '#d32f2f', padding: '12px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+//             <AlertCircle size={18} /> {attendanceError}
+//             <button onClick={() => setShowCredsForm(true)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#d32f2f', textDecoration: 'underline', cursor: 'pointer' }}>Update Credentials</button>
+//           </div>
+//         )}
+
+//         <div className="attendance-summary-card">
+//           <div className="summary-stat">
+//             <div className="value">{overallAttended} / {overallTotal}</div>
+//             <div className="label">Total Classes</div>
+//           </div>
+//           <div className="summary-stat">
+//             <div className="value" style={{ color: overallPercentage < 80 ? '#ff4d4f' : '#4caf50' }}>{overallPercentage}%</div>
+//             <div className="label">Overall Avg</div>
+//           </div>
+//         </div>
+
+//         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+//           {Object.entries(attendanceData || {}).map(([subject, data], idx) => {
+//             const isExp = expandedSubject === subject;
+//             const pct = parseFloat(data.percentage);
+//             const color = pct >= 80 ? '#4caf50' : (pct >= 75 ? '#faad14' : '#ff4d4f');
+            
+//             return (
+//               <div key={idx} className="subject-card">
+//                 <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
+//                   <div className="subject-title">{subject}</div>
+//                   <div className="subject-stats">
+//                     <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
+//                     <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: color }}></div></div>
+//                     <span style={{ color, fontWeight: 'bold', width: '45px', textAlign: 'right' }}>{data.percentage}%</span>
+//                     {isExp ? <ChevronUp size={16} color="#888"/> : <ChevronDown size={16} color="#888"/>}
+//                   </div>
+//                 </div>
+                
+//                 <div className={`class-list ${isExp ? 'expanded' : ''}`}>
+//                   {data.classes.map((cls, cIdx) => (
+//                     <div key={cIdx} className="class-row">
+//                       <span style={{ width: '40px' }}>{cls.class}</span>
+//                       <span style={{ flex: 1 }}>{cls.date}</span>
+//                       <span style={{ flex: 1 }}>{cls.time}</span>
+//                       <span className={`status-badge status-${cls.status.toLowerCase()}`}>{cls.status}</span>
+//                     </div>
+//                   ))}
+//                   {data.classes.length === 0 && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>No records found.</div>}
+//                 </div>
+//               </div>
+//             );
+//           })}
+//         </div>
+//       </div>
+//     );
+//   };
+
 //   return (
 //     <>
 //       <style>{injectedStyles}</style>
 
-//       {/* NEW: iOS Install Instructions Modal */}
 //       {showIOSPrompt && (
 //         <div className="modal-overlay" onClick={() => setShowIOSPrompt(false)}>
 //           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -1880,7 +2082,6 @@ export default App;
 //         </div>
 //       )}
 
-//       {/* Settings modal — lets a student change & persist their section */}
 //       {showSettingsModal && (
 //         <div className="modal-overlay" onClick={() => setShowSettingsModal(false)}>
 //           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -1888,13 +2089,7 @@ export default App;
 //             <p style={{ fontSize: '0.9rem', color: '#666', margin: 0 }}>Choose your section. This is saved to your account and remembered next time you log in.</p>
 //             <div className="settings-section-grid">
 //               {SECTIONS.map(sec => (
-//                 <button
-//                   key={sec}
-//                   className={`settings-section-btn ${settingsSectionDraft === sec ? 'active' : ''}`}
-//                   onClick={() => setSettingsSectionDraft(sec)}
-//                 >
-//                   {sec}
-//                 </button>
+//                 <button key={sec} className={`settings-section-btn ${settingsSectionDraft === sec ? 'active' : ''}`} onClick={() => setSettingsSectionDraft(sec)}>{sec}</button>
 //               ))}
 //             </div>
 //             {settingsStatus && <div className="settings-status-text">{settingsStatus}</div>}
@@ -1941,16 +2136,19 @@ export default App;
 //           <div className="nav-menu">
 //             <button className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`} onClick={() => setActiveTab('timetable')}><Calendar size={18} /> Timetable</button>
 //             <button className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}><Table2 size={18} /> Summary Table</button>
+//             <button className={`nav-btn ${activeTab === 'attendance' ? 'active' : ''}`} onClick={() => setActiveTab('attendance')}><ClipboardCheck size={18} /> Attendance</button>
 //           </div>
 
-//           <div className="section-selector-container">
-//             <span className="section-label">Select Section</span>
-//             <div className="sec-grid">
-//               {SECTIONS.map((sec) => (
-//                 <button key={sec} className={`section-btn ${section === sec ? 'active' : ''}`} onClick={() => setSection(sec)}>{sec}</button>
-//               ))}
+//           {activeTab !== 'attendance' && (
+//             <div className="section-selector-container">
+//               <span className="section-label">Select Section</span>
+//               <div className="sec-grid">
+//                 {SECTIONS.map((sec) => (
+//                   <button key={sec} className={`section-btn ${section === sec ? 'active' : ''}`} onClick={() => setSection(sec)}>{sec}</button>
+//                 ))}
+//               </div>
 //             </div>
-//           </div>
+//           )}
 
 //           <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
 //               {isInstallable && (
@@ -1960,7 +2158,7 @@ export default App;
 //               )}
 //               <button onClick={() => { setSettingsSectionDraft(section); setShowSettingsModal(true); }} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><Settings size={18} /> Settings</button>
 //               <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><MessageSquare size={18} /> Provide Feedback</button>
-//               <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>
+//               {activeTab === 'timetable' && <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>}
 //               <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}><LogOut size={18} /> Sign Out</button>
 //           </div>
 //         </aside>
@@ -1977,6 +2175,8 @@ export default App;
 
 //           {!loading && !error && (
 //             <>
+//               {activeTab === 'attendance' && renderAttendanceTab()}
+
 //               {activeTab === 'timetable' && (
 //                 <>
 //                   <div className="live-data-banner">
@@ -2089,14 +2289,61 @@ export default App;
 //   );
 // }
 
-// // --- SPLIT-PANE DASHBOARD COMPONENT ---
+// function CredentialForm({ onSubmit, onCancel, hasCreds }) {
+//   const [user, setUser] = useState('');
+//   const [pass, setPass] = useState('');
+//   const [showPass, setShowPass] = useState(false);
+
+//   return (
+//     <div className="creds-card" style={{ maxWidth: '400px', margin: '4rem auto' }}>
+//       <Lock size={40} color="var(--accent-gold)" style={{ marginBottom: '1rem' }} />
+//       <h3>{hasCreds ? 'Update' : 'Link'} OLT Account</h3>
+//       <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Your credentials are encrypted and stored securely to sync your attendance.</p>
+      
+//       <div className="input-group">
+//         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Roll Number</label>
+//         <input type="text" placeholder="e.g. 2601030" value={user} onChange={e => setUser(e.target.value)} />
+//       </div>
+//       <div className="input-group" style={{ position: 'relative' }}>
+//         <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Password</label>
+//         <input type={showPass ? 'text' : 'password'} placeholder="Date of birth (DDMMYYYY)" value={pass} onChange={e => setPass(e.target.value)} />
+//         <button onClick={() => setShowPass(!showPass)} style={{ position: 'absolute', right: '10px', top: '34px', background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>
+//           {showPass ? <EyeOff size={18}/> : <Eye size={18}/>}
+//         </button>
+//       </div>
+
+//       <div style={{ display: 'flex', gap: '10px', marginTop: '1.5rem' }}>
+//         {hasCreds && <button className="btn-cancel" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>}
+//         <button className="btn-submit" style={{ flex: 1 }} disabled={!user || !pass} onClick={() => onSubmit(user, pass)}>Securely Save</button>
+//       </div>
+//     </div>
+//   );
+// }
+
+// function OTPForm({ onSubmit, isLoading }) {
+//   const [otp, setOtp] = useState('');
+//   return (
+//     <div className="creds-card" style={{ maxWidth: '400px', margin: '4rem auto' }}>
+//       <AlertCircle size={40} color="var(--accent-gold)" style={{ marginBottom: '1rem' }} />
+//       <h3>Two-Factor Authentication</h3>
+//       <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Open your Google Authenticator app and enter the 6-digit code for OLT.</p>
+      
+//       <div className="input-group">
+//         <input type="text" placeholder="000000" maxLength={6} style={{ textAlign: 'center', fontSize: '1.5rem', letterSpacing: '5px' }} value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ''))} disabled={isLoading} />
+//       </div>
+      
+//       <button className="btn-submit" style={{ width: '100%', marginTop: '1rem' }} disabled={otp.length !== 6 || isLoading} onClick={() => onSubmit(otp)}>
+//         {isLoading ? 'Verifying...' : 'Verify & Continue'}
+//       </button>
+//     </div>
+//   );
+// }
+
 // function AdminPortal({ injectedStyles }) {
 //   const [password, setPassword] = useState('');
 //   const [authenticated, setAuthenticated] = useState(false);
-
 //   const [feedbacks, setFeedbacks] = useState([]);
 //   const [users, setUsers] = useState([]);
-
 //   const [error, setError] = useState('');
 //   const [isLoading, setIsLoading] = useState(false);
 
@@ -2118,14 +2365,12 @@ export default App;
 //   const timeAgo = (date) => {
 //     if (!date) return "Never logged in";
 //     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-
 //     let interval = seconds / 86400;
 //     if (interval > 1) return Math.floor(interval) + "d ago";
 //     interval = seconds / 3600;
 //     if (interval > 1) return Math.floor(interval) + "h ago";
 //     interval = seconds / 60;
 //     if (interval > 5) return Math.floor(interval) + "m ago";
-
 //     return "Online Now";
 //   };
 
@@ -2145,8 +2390,6 @@ export default App;
 //           </div>
 //         ) : (
 //           <div className="admin-dashboard-layout">
-
-//             {/* LEFT SIDEBAR: Active Users */}
 //             <aside className="admin-sidebar">
 //               <div className="admin-sidebar-header">
 //                 <h3 style={{margin: 0}}>Active Users</h3>
@@ -2168,8 +2411,6 @@ export default App;
 //                 })}
 //               </div>
 //             </aside>
-
-//             {/* MAIN CONTENT: Feedback */}
 //             <main className="admin-main">
 //               <div className="admin-main-header">
 //                 <h2 style={{margin: 0}}>User Feedback</h2>
@@ -2187,7 +2428,6 @@ export default App;
 //                 ))}
 //               </div>
 //             </main>
-
 //           </div>
 //         )}
 //       </div>
