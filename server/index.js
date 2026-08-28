@@ -315,7 +315,7 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 
 
 // ============================================================
-// OLT SCRAPING ENGINE (Fully replicating the Python logic)
+// OLT SCRAPING ENGINE (Robust Auto-Detect)
 // ============================================================
 
 const activeScrapeSessions = new Map();
@@ -422,7 +422,6 @@ async function dropdownPostback(client, state, field, value) {
     return res.data;
 }
 
-// Mimic Python's manual table extraction to bypass ASP.NET Delta formatting issues
 function extractTableHtml(responseText) {
     const TABLE_ID = "ctl00_Main_AttendanceReport_GridViewAttendanceMerged";
     const marker = `id="${TABLE_ID}"`;
@@ -463,7 +462,7 @@ function extractAttendance(html, rollNo) {
         const $cell = cheerio.load(htmlContent);
         $cell('br').replaceWith('\n');
         
-        const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
+        const parts = $cell.text().split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
         
         if (parts.length >= 3) {
             classes.push({ class: parts[0], date: parts[1], time: parts[2] });
@@ -481,8 +480,10 @@ function extractAttendance(html, rollNo) {
     let userRow = null;
     for (let i = 1; i < rows.length; i++) {
         const cells = $(rows[i]).find('td');
-        const currentRoll = $(cells[0]).text().replace(/\s+/g, ' ').trim();
-        if (currentRoll === rollNo.trim()) { 
+        if (!cells || cells.length === 0) continue;
+        const currentRoll = $(cells[0]).text().replace(/\s+/g, '').trim();
+        const targetRoll = rollNo.replace(/\s+/g, '').trim();
+        if (currentRoll === targetRoll) { 
             userRow = cells; 
             break; 
         }
@@ -513,7 +514,6 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
         
         const username = user.oltUsername;
         const password = decryptText(user.oltPassword);
-        const section = user.defaultSection || 'A';
 
         const client = new OLTClient();
         const initial = await client.get(LOGIN_URL);
@@ -534,7 +534,7 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
 
         if (text.includes('TextBoxOTP') || text.includes('OTP') || text.includes('Two-Factor')) {
             const otpState = parseFullForm((await client.get(LOGIN_URL, { 'Referer': LOGIN_URL })).data);
-            activeScrapeSessions.set(req.user.id, { client, state: otpState, username, section, timestamp: Date.now() });
+            activeScrapeSessions.set(req.user.id, { client, state: otpState, username, timestamp: Date.now() });
             return res.json({ requiresOtp: true });
         }
         
@@ -542,7 +542,7 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
             return res.status(401).json({ error: 'Invalid OLT Credentials' });
         }
 
-        return await completeScrape(client, section, username, res);
+        return await completeScrape(client, username, res);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Error connecting to OLT portal' });
@@ -555,7 +555,7 @@ app.post('/api/attendance/verify-otp', authenticateUser, async (req, res) => {
         const session = activeScrapeSessions.get(req.user.id);
         if (!session) return res.status(400).json({ error: 'Session expired. Try again.' });
         
-        const { client, state, username, section } = session;
+        const { client, state, username } = session;
         state['ctl00$Login1$TextBoxOTP'] = otp;
         state['ctl00$Login1$ButtonClose'] = 'Submit';
         
@@ -566,13 +566,13 @@ app.post('/api/attendance/verify-otp', authenticateUser, async (req, res) => {
             return res.status(401).json({ error: 'Invalid OTP' });
         }
 
-        return await completeScrape(client, section, username, res);
+        return await completeScrape(client, username, res);
     } catch (error) {
         res.status(500).json({ error: 'Error processing OTP' });
     }
 });
 
-async function completeScrape(client, section, username, res) {
+async function completeScrape(client, username, res) {
     try {
         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
         const state = parseFullForm(attendanceRes.data);
@@ -587,9 +587,38 @@ async function completeScrape(client, section, username, res) {
         }
 
         const results = {};
+        let detectedSection = null;
+        let successfulSubject = null;
+        
+        // 1. Bulletproof Auto-Discovery: Test the first two subjects. If roll no is missing in Subject 1, try Subject 2.
+        const subjectsToTest = [SUBJECTS[0], SUBJECTS[1]]; 
+        
+        for (const testSubj of subjectsToTest) {
+            if (!testSubj) continue;
+            await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', testSubj);
+            
+            for (const sec of ALL_SECTIONS) {
+                const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', sec);
+                const data = extractAttendance(sectionResHtml, username);
+                if (data && data.total > 0) { // Successfully found their row
+                    detectedSection = sec;
+                    successfulSubject = testSubj;
+                    results[testSubj] = data;
+                    break;
+                }
+            }
+            if (detectedSection) break;
+        }
+
+        if (!detectedSection) {
+            return res.status(404).json({ error: `Roll number ${username} not found. Are your credentials correct?` });
+        }
+
+        // 2. Fetch remaining subjects using the correctly detected section
         for (const subject of SUBJECTS) {
+            if (subject === successfulSubject) continue; // Skip the one we already fetched
             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
-            const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
+            const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', detectedSection);
             
             const attendanceData = extractAttendance(sectionResHtml, username);
             if (attendanceData) {
@@ -597,7 +626,7 @@ async function completeScrape(client, section, username, res) {
             }
         }
 
-        res.json({ success: true, results });
+        res.json({ success: true, results, detectedSection });
     } catch (error) {
         console.error("Scrape Error:", error);
         res.status(500).json({ error: 'Failed to extract attendance data' });
@@ -1022,6 +1051,8 @@ app.listen(PORT, () => {
 // const mongoose = require('mongoose');
 // const { OAuth2Client } = require('google-auth-library');
 // const jwt = require('jsonwebtoken');
+// const crypto = require('crypto');
+// const cheerio = require('cheerio');
 
 // // Security middlewares
 // const helmet = require('helmet');
@@ -1039,6 +1070,7 @@ app.listen(PORT, () => {
 //     credentials: true
 // }));
 // app.use(express.json({ limit: '15kb' }));
+// app.use(express.urlencoded({ extended: true, limit: '15kb' }));
 
 // app.use((req, res, next) => {
 //     Object.defineProperty(req, 'query', {
@@ -1082,9 +1114,11 @@ app.listen(PORT, () => {
 //     name: String,
 //     email: { type: String, unique: true, required: true },
 //     picture: String,
-//     defaultSection: { type: String, enum: ALL_SECTIONS, default: 'A' }, // NEW: persisted section preference
+//     defaultSection: { type: String, enum: ALL_SECTIONS, default: 'A' },
 //     lastActive: { type: Date, default: Date.now },
-//     createdAt: { type: Date, default: Date.now }
+//     createdAt: { type: Date, default: Date.now },
+//     oltUsername: { type: String, default: '' },
+//     oltPassword: { type: String, default: '' } 
 // });
 // const User = mongoose.model('User', userSchema);
 
@@ -1096,8 +1130,6 @@ app.listen(PORT, () => {
 // });
 // const Feedback = mongoose.model('Feedback', feedbackSchema);
 
-// // NEW: `section` is now part of the todo's identity, so the same subject/date
-// // can carry different notes per section.
 // const todoSchema = new mongoose.Schema({
 //     userEmail: { type: String, required: true, index: true },
 //     date: { type: String, required: true },
@@ -1111,6 +1143,33 @@ app.listen(PORT, () => {
 // });
 // todoSchema.index({ userEmail: 1, date: 1, section: 1, subject: 1 }, { unique: true });
 // const Todo = mongoose.model('Todo', todoSchema);
+
+// // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
+// const ENCRYPTION_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'iimtrichy_fallback_secret', 'salt', 32);
+// const ALGORITHM = 'aes-256-cbc';
+
+// function encryptText(text) {
+//     if (!text) return '';
+//     const iv = crypto.randomBytes(16);
+//     const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+//     let encrypted = cipher.update(text, 'utf8', 'hex');
+//     encrypted += cipher.final('hex');
+//     return `${iv.toString('hex')}:${encrypted}`;
+// }
+
+// function decryptText(text) {
+//     if (!text) return '';
+//     try {
+//         const parts = text.split(':');
+//         const iv = Buffer.from(parts[0], 'hex');
+//         const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+//         let decrypted = decipher.update(parts[1], 'hex', 'utf8');
+//         decrypted += decipher.final('utf8');
+//         return decrypted;
+//     } catch (err) {
+//         return '';
+//     }
+// }
 
 // // --- 2. GOOGLE AUTH SETUP ---
 // const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.googleusercontent.com';
@@ -1127,10 +1186,7 @@ app.listen(PORT, () => {
 //     try {
 //         const decoded = jwt.verify(token, JWT_SECRET);
 //         req.user = decoded;
-
-//         // Silently update their last active status in the background
 //         User.findByIdAndUpdate(decoded.id, { lastActive: new Date() }).catch(() => {});
-
 //         next();
 //     } catch (error) {
 //         return res.status(401).json({ error: 'Unauthorized: Invalid or expired token.' });
@@ -1162,7 +1218,7 @@ app.listen(PORT, () => {
 //             await user.save();
 //             console.log(`New user registered: ${email}`);
 //         } else {
-//             user.lastActive = new Date(); // Update on fresh login
+//             user.lastActive = new Date();
 //             await user.save();
 //         }
 
@@ -1172,25 +1228,32 @@ app.listen(PORT, () => {
 //             { expiresIn: '60d' }
 //         );
 
-//         res.json({ message: 'Login successful', user, token: sessionToken });
+//         const userObj = user.toObject();
+//         userObj.hasOltCreds = !!(userObj.oltUsername && userObj.oltPassword);
+//         delete userObj.oltPassword;
+
+//         res.json({ message: 'Login successful', user: userObj, token: sessionToken });
 //     } catch (error) {
 //         console.error('Auth Error:', error);
 //         res.status(401).json({ error: 'Invalid or expired Google token' });
 //     }
 // });
 
-// // NEW: fetch the latest profile (used to hydrate the saved default section on load)
 // app.get('/api/user/me', authenticateUser, async (req, res) => {
 //     try {
 //         const user = await User.findById(req.user.id).select('-__v');
 //         if (!user) return res.status(404).json({ error: 'User not found.' });
-//         res.json({ user });
+        
+//         const userObj = user.toObject();
+//         userObj.hasOltCreds = !!(userObj.oltUsername && userObj.oltPassword);
+//         delete userObj.oltPassword;
+        
+//         res.json({ user: userObj });
 //     } catch (error) {
 //         res.status(500).json({ error: 'Server error fetching profile.' });
 //     }
 // });
 
-// // NEW: persist a student's chosen section so it's remembered across devices/sessions
 // app.post('/api/user/section', authenticateUser, async (req, res) => {
 //     const { section } = req.body;
 //     if (!section || !ALL_SECTIONS.includes(String(section).toUpperCase())) {
@@ -1205,6 +1268,19 @@ app.listen(PORT, () => {
 //         res.json({ success: true, user });
 //     } catch (error) {
 //         res.status(500).json({ error: 'Server error saving section preference.' });
+//     }
+// });
+
+// app.post('/api/user/olt-credentials', authenticateUser, async (req, res) => {
+//     try {
+//         const { username, password } = req.body;
+//         await User.findByIdAndUpdate(req.user.id, {
+//             oltUsername: username,
+//             oltPassword: encryptText(password)
+//         });
+//         res.json({ success: true });
+//     } catch (error) {
+//         res.status(500).json({ error: 'Failed to save credentials' });
 //     }
 // });
 
@@ -1226,7 +1302,6 @@ app.listen(PORT, () => {
 //     }
 // });
 
-// // Consolidated Admin Dashboard Route
 // const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 // app.post('/api/admin/data', strictLimiter, async (req, res) => {
 //     const { password } = req.body;
@@ -1242,7 +1317,6 @@ app.listen(PORT, () => {
 //     }
 // });
 
-// // --- TODO ROUTES (now nested by date -> section -> subject) ---
 // app.get('/api/todos', authenticateUser, async (req, res) => {
 //     try {
 //         const todos = await Todo.find({ userEmail: req.user.email });
@@ -1284,7 +1358,310 @@ app.listen(PORT, () => {
 //     }
 // });
 
-// // --- 4. EXCEL PARSING HELPER FUNCTIONS ---
+
+// // ============================================================
+// // OLT SCRAPING ENGINE (Fully replicating the Python logic)
+// // ============================================================
+
+// const activeScrapeSessions = new Map();
+// const BASE_URL = "https://olt.iimtrichy.ac.in";
+// const LOGIN_URL = `${BASE_URL}/Default.aspx`;
+// const ATTENDANCE_URL = `${BASE_URL}/SubjectAttendance`;
+
+// const SUBJECTS = [
+//     "Business Statistics", "Financial Reporting and Analysis", "Managerial Communication", 
+//     "Managerial Economics", "Marketing Management -I", "Micro Organizational Behaviour"
+// ];
+
+// class OLTClient {
+//     constructor() {
+//         this.cookies = {};
+//         this.client = axios.create({ 
+//             validateStatus: () => true, 
+//             maxRedirects: 0,
+//             headers: {
+//                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+//                 "Accept-Language": "en-US,en;q=0.9",
+//                 "Connection": "keep-alive"
+//             }
+//         });
+//     }
+    
+//     updateCookies(headers) {
+//         if (headers['set-cookie']) {
+//             headers['set-cookie'].forEach(c => {
+//                 const cookieStr = c.split(';')[0];
+//                 const eqIndex = cookieStr.indexOf('=');
+//                 if(eqIndex > -1) {
+//                     const key = cookieStr.substring(0, eqIndex);
+//                     const val = cookieStr.substring(eqIndex + 1);
+//                     this.cookies[key] = val;
+//                 }
+//             });
+//         }
+//     }
+    
+//     getCookieStr() {
+//         return Object.entries(this.cookies).map(([k, v]) => `${k}=${v}`).join('; ');
+//     }
+
+//     async get(url, headers = {}) {
+//         const res = await this.client.get(url, { headers: { ...headers, 'Cookie': this.getCookieStr() } });
+//         this.updateCookies(res.headers);
+//         return res;
+//     }
+
+//     async post(url, data, headers = {}) {
+//         const res = await this.client.post(url, new URLSearchParams(data).toString(), {
+//             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': this.getCookieStr(), ...headers }
+//         });
+//         this.updateCookies(res.headers);
+//         return res;
+//     }
+// }
+
+// function parseFullForm(html) {
+//     const $ = cheerio.load(html);
+//     const data = {};
+//     $('input').each((i, el) => {
+//         const name = $(el).attr('name');
+//         if (!name) return;
+//         const type = ($(el).attr('type') || 'text').toLowerCase();
+//         if (['submit', 'button', 'reset', 'image'].includes(type)) return;
+//         if (['checkbox', 'radio'].includes(type) && !$(el).is(':checked')) return;
+//         data[name] = $(el).attr('value') || '';
+//     });
+//     $('select').each((i, el) => {
+//         const name = $(el).attr('name');
+//         if (name) data[name] = $(el).find('option[selected]').attr('value') || $(el).find('option').first().attr('value') || '';
+//     });
+//     return data;
+// }
+
+// function updateState(state, responseText) {
+//     const pattern = /(?:^|\|)hiddenField\|([^|]*)\|([^|]*)/g;
+//     let match;
+//     while ((match = pattern.exec(responseText)) !== null) {
+//         state[match[1]] = match[2];
+//     }
+// }
+
+// async function dropdownPostback(client, state, field, value) {
+//     const data = { ...state };
+//     data[field] = value;
+//     data['ctl00$ToolkitScriptManager1'] = `ctl00$UpdatePanel1|${field}`;
+//     data['__EVENTTARGET'] = field;
+//     data['__EVENTARGUMENT'] = '';
+//     data['__LASTFOCUS'] = '';
+//     data['__ASYNCPOST'] = 'true';
+
+//     const headers = { 
+//         'Cache-Control': 'no-cache', 
+//         'X-MicrosoftAjax': 'Delta=true', 
+//         'X-Requested-With': 'XMLHttpRequest', 
+//         'Referer': ATTENDANCE_URL 
+//     };
+//     const res = await client.post(ATTENDANCE_URL, data, headers);
+//     updateState(state, res.data);
+//     state[field] = value;
+//     return res.data;
+// }
+
+// // Mimic Python's manual table extraction to bypass ASP.NET Delta formatting issues
+// function extractTableHtml(responseText) {
+//     const TABLE_ID = "ctl00_Main_AttendanceReport_GridViewAttendanceMerged";
+//     const marker = `id="${TABLE_ID}"`;
+//     const position = responseText.indexOf(marker);
+//     if (position < 0) return null;
+
+//     const start = responseText.lastIndexOf("<table", position);
+//     let end = responseText.indexOf("</table>", position);
+//     if (start < 0 || end < 0) return null;
+//     end += "</table>".length;
+
+//     return responseText.substring(start, end);
+// }
+
+// function extractAttendance(html, rollNo) {
+//     let tableHtml = extractTableHtml(html);
+//     let $;
+//     let table;
+
+//     if (tableHtml) {
+//         $ = cheerio.load(tableHtml);
+//         table = $('table').first();
+//     } else {
+//         $ = cheerio.load(html);
+//         table = $('#ctl00_Main_AttendanceReport_GridViewAttendanceMerged');
+//     }
+
+//     if (!table || !table.length) return null;
+
+//     const rows = table.find('tr');
+//     if (rows.length < 2) return null;
+
+//     const headerCells = $(rows[0]).find('th');
+//     const classes = [];
+    
+//     for (let i = 2; i < headerCells.length - 2; i++) {
+//         const htmlContent = $(headerCells[i]).html() || '';
+//         const $cell = cheerio.load(htmlContent);
+//         $cell('br').replaceWith('\n');
+        
+//         const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
+        
+//         if (parts.length >= 3) {
+//             classes.push({ class: parts[0], date: parts[1], time: parts[2] });
+//         } else {
+//             const fullText = $cell.text().replace(/\s+/g, ' ').trim();
+//             const match = fullText.match(/(\d+)\s+(\d{2}-\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+//             if (match) {
+//                 classes.push({ class: match[1], date: match[2], time: match[3] });
+//             } else {
+//                 classes.push({ class: fullText, date: '', time: '' });
+//             }
+//         }
+//     }
+
+//     let userRow = null;
+//     for (let i = 1; i < rows.length; i++) {
+//         const cells = $(rows[i]).find('td');
+//         const currentRoll = $(cells[0]).text().replace(/\s+/g, ' ').trim();
+//         if (currentRoll === rollNo.trim()) { 
+//             userRow = cells; 
+//             break; 
+//         }
+//     }
+//     if (!userRow) return null;
+
+//     const attendanceValues = [];
+//     for (let i = 2; i < userRow.length - 2; i++) {
+//         const classInfo = classes[i - 2];
+//         if (!classInfo) break;
+//         const status = $(userRow[i]).text().replace(/\s+/g, ' ').trim();
+//         attendanceValues.push({ ...classInfo, status });
+//     }
+
+//     const attended = parseInt($(userRow[userRow.length - 2]).text().trim(), 10) || 0;
+//     const total = parseInt($(userRow[userRow.length - 1]).text().trim(), 10) || 0;
+//     const percentage = total ? ((attended / total) * 100).toFixed(2) : null;
+
+//     return { classes: attendanceValues, attended, total, percentage };
+// }
+
+// app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
+//     try {
+//         const user = await User.findById(req.user.id);
+//         if (!user || !user.oltUsername || !user.oltPassword) {
+//             return res.status(400).json({ error: 'No credentials saved' });
+//         }
+        
+//         const username = user.oltUsername;
+//         const password = decryptText(user.oltPassword);
+//         const section = user.defaultSection || 'A';
+
+//         const client = new OLTClient();
+//         const initial = await client.get(LOGIN_URL);
+//         const state = parseFullForm(initial.data);
+
+//         state['ctl00$Login1$LoginView1$UserName'] = username;
+//         state['ctl00$Login1$LoginView1$Password'] = password;
+//         state['ctl00$Login1$TextBoxIP'] = "";
+//         state['ctl00$Login1$TextBoxOTP'] = "";
+//         state['ctl00$ToolkitScriptManager1'] = `ctl00$UpdatePanel1|ctl00$Login1$LoginView1$ButtonLogin`;
+//         state['__EVENTTARGET'] = 'ctl00$Login1$LoginView1$ButtonLogin';
+//         state['__EVENTARGUMENT'] = '';
+//         state['__LASTFOCUS'] = '';
+//         state['__ASYNCPOST'] = 'true';
+
+//         const loginRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
+//         const text = loginRes.data;
+
+//         if (text.includes('TextBoxOTP') || text.includes('OTP') || text.includes('Two-Factor')) {
+//             const otpState = parseFullForm((await client.get(LOGIN_URL, { 'Referer': LOGIN_URL })).data);
+//             activeScrapeSessions.set(req.user.id, { client, state: otpState, username, section, timestamp: Date.now() });
+//             return res.json({ requiresOtp: true });
+//         }
+        
+//         if (!text.includes('pageRedirect||')) {
+//             return res.status(401).json({ error: 'Invalid OLT Credentials' });
+//         }
+
+//         return await completeScrape(client, section, username, res);
+//     } catch (error) {
+//         console.error(error);
+//         res.status(500).json({ error: 'Error connecting to OLT portal' });
+//     }
+// });
+
+// app.post('/api/attendance/verify-otp', authenticateUser, async (req, res) => {
+//     try {
+//         const { otp } = req.body;
+//         const session = activeScrapeSessions.get(req.user.id);
+//         if (!session) return res.status(400).json({ error: 'Session expired. Try again.' });
+        
+//         const { client, state, username, section } = session;
+//         state['ctl00$Login1$TextBoxOTP'] = otp;
+//         state['ctl00$Login1$ButtonClose'] = 'Submit';
+        
+//         const otpRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
+//         activeScrapeSessions.delete(req.user.id);
+        
+//         if (otpRes.data.includes('Invalid') || otpRes.data.includes('TextBoxOTP')) {
+//             return res.status(401).json({ error: 'Invalid OTP' });
+//         }
+
+//         return await completeScrape(client, section, username, res);
+//     } catch (error) {
+//         res.status(500).json({ error: 'Error processing OTP' });
+//     }
+// });
+
+// async function completeScrape(client, section, username, res) {
+//     try {
+//         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
+//         const state = parseFullForm(attendanceRes.data);
+        
+//         const PROGRAM = "PGPM 2026-28", TERM = "Term-I";
+//         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName'] !== PROGRAM) {
+//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName', PROGRAM);
+//         }
+            
+//         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM) {
+//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM);
+//         }
+
+//         const results = {};
+//         for (const subject of SUBJECTS) {
+//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
+//             const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
+            
+//             const attendanceData = extractAttendance(sectionResHtml, username);
+//             if (attendanceData) {
+//                 results[subject] = attendanceData;
+//             }
+//         }
+
+//         res.json({ success: true, results });
+//     } catch (error) {
+//         console.error("Scrape Error:", error);
+//         res.status(500).json({ error: 'Failed to extract attendance data' });
+//     }
+// }
+
+// // Clean up stale scrape sessions
+// setInterval(() => {
+//     const now = Date.now();
+//     for (const [id, session] of activeScrapeSessions.entries()) {
+//         if (now - session.timestamp > 5 * 60 * 1000) activeScrapeSessions.delete(id);
+//     }
+// }, 60 * 1000);
+
+
+// // ============================================================
+// // 4. EXCEL PARSING HELPER FUNCTIONS
+// // ============================================================
+
 // const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
 
 // const getCellText = (cell) => {
@@ -1342,7 +1719,10 @@ app.listen(PORT, () => {
 //     };
 // };
 
-// // --- 5. CORE EXTRACTION LOGIC ---
+// // ============================================================
+// // 5. CORE EXTRACTION LOGIC (TIMETABLE)
+// // ============================================================
+
 // const extractSectionData = (workbook, section) => {
 //     let targetCol = null;
 //     let sectionEndCol = null;
@@ -1526,8 +1906,6 @@ app.listen(PORT, () => {
 //         }
 //     });
 
-//     // NEW: compute a running "Session N" number per subject across the whole term for this section.
-//     // Cancelled slots don't consume a session number; remarks/event rows are ignored entirely.
 //     timetable.sort((a, b) => a.isoDate.localeCompare(b.isoDate));
 //     const subjectSessionCounter = {};
 //     timetable.forEach(dayEntry => {
@@ -1579,7 +1957,10 @@ app.listen(PORT, () => {
 //     return { timetable, summary: summaryData };
 // };
 
-// // --- 6. BACKGROUND POLLING & IN-MEMORY CACHE ---
+// // ============================================================
+// // 6. BACKGROUND POLLING & IN-MEMORY CACHE
+// // ============================================================
+
 // let globalCache = {};
 // let lastFetchTime = 0;
 // let isFetching = false;
@@ -1618,9 +1999,10 @@ app.listen(PORT, () => {
 //     return activeFetchPromise;
 // };
 
-// // --- 7. TIMETABLE API ---
-// // NOTE: response now includes a `meta` block so the frontend can render the
-// // "data is live, last synced at X, next sync at Y" banner and auto-refresh itself.
+// // ============================================================
+// // 7. TIMETABLE API
+// // ============================================================
+
 // app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 //     const section = req.params.section.toUpperCase();
 //     const forceRefresh = req.query.force === 'true';
@@ -1650,8 +2032,11 @@ app.listen(PORT, () => {
 //     }
 // });
 
-// // --- 8. SELF-PING & DAEMON ---
-// const PING_URL = "https://iimt-7iy6.onrender.com";
+// // ============================================================
+// // 8. SELF-PING & DAEMON
+// // ============================================================
+
+// const PING_URL = process.env.PING_URL || "http://localhost:5000";
 // let pingCount = 0;
 
 // const pingServer = async () => {

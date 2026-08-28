@@ -88,6 +88,9 @@ function App() {
   const [showCredsForm, setShowCredsForm] = useState(false);
   const [otpRequired, setOtpRequired] = useState(false);
   const [expandedSubject, setExpandedSubject] = useState(null);
+  
+  const [detectedSec, setDetectedSec] = useState(null); // Found section from OLT
+  const [scrapeProgress, setScrapeProgress] = useState({ percent: 0, text: '' }); // Interactive Progress
 
   const [showFeatureBanner, setShowFeatureBanner] = useState(false);
 
@@ -123,7 +126,7 @@ function App() {
     };
   }, []);
 
-  // --- NEW: Feature Banner 5-Day Logic ---
+  // --- Feature Banner 5-Day Logic ---
   useEffect(() => {
     if (!user) return;
     const dismissed = localStorage.getItem(BANNER_STORAGE_KEY);
@@ -380,34 +383,87 @@ function App() {
     }
   };
 
+  const triggerProgressSimulation = () => {
+    const steps = [
+      'Bypassing ASP.NET Portal...',
+      'Authenticating credentials...',
+      'Auto-detecting your Section...',
+      'Fetching Business Statistics...',
+      'Fetching Financial Reporting...',
+      'Fetching Managerial Communication...',
+      'Fetching Managerial Economics...',
+      'Fetching Marketing Management...',
+      'Fetching Micro Organizational Behaviour...',
+      'Finalizing data...'
+    ];
+    let stepIdx = 0;
+    setProgress({ percent: 5, text: steps[0] });
+
+    return setInterval(() => {
+      setProgress(prev => {
+        let nextPercent = prev.percent + (100 / steps.length) / 6; 
+        if (nextPercent > 98) nextPercent = 98;
+        const targetStep = Math.min(Math.floor(nextPercent / (100 / steps.length)), steps.length - 1);
+        return { percent: nextPercent, text: steps[targetStep] };
+      });
+    }, 200);
+  };
+
   const fetchAttendance = async () => {
     setIsFetchingAttendance(true);
     setAttendanceError('');
     setOtpRequired(false);
+    
+    const simInterval = triggerProgressSimulation();
+
     try {
       const token = localStorage.getItem('iimt_token');
       const res = await axios.post(`${API_BASE_URL}/api/attendance/fetch`, {}, { headers: { Authorization: `Bearer ${token}` }});
-      if (res.data.requiresOtp) {
-          setOtpRequired(true);
-      } else {
-          setAttendanceData(res.data.results);
-      }
+      
+      clearInterval(simInterval);
+      setScrapeProgress({ percent: 100, text: 'Complete!' });
+
+      setTimeout(() => {
+        if (res.data.requiresOtp) {
+            setOtpRequired(true);
+        } else {
+            setAttendanceData(res.data.results);
+            if (res.data.detectedSection) setDetectedSec(res.data.detectedSection);
+        }
+        setIsFetchingAttendance(false);
+      }, 500);
+
     } catch (err) {
+      clearInterval(simInterval);
       setAttendanceError(err.response?.data?.error || 'Failed to fetch attendance from OLT.');
-    } finally { setIsFetchingAttendance(false); }
+      setIsFetchingAttendance(false);
+    }
   };
 
   const verifyOtp = async (otp) => {
     setIsFetchingAttendance(true);
     setAttendanceError('');
+    
+    const simInterval = triggerProgressSimulation();
+
     try {
       const token = localStorage.getItem('iimt_token');
       const res = await axios.post(`${API_BASE_URL}/api/attendance/verify-otp`, { otp }, { headers: { Authorization: `Bearer ${token}` }});
-      setAttendanceData(res.data.results);
-      setOtpRequired(false);
+      
+      clearInterval(simInterval);
+      setScrapeProgress({ percent: 100, text: 'Complete!' });
+
+      setTimeout(() => {
+        setAttendanceData(res.data.results);
+        if (res.data.detectedSection) setDetectedSec(res.data.detectedSection);
+        setOtpRequired(false);
+        setIsFetchingAttendance(false);
+      }, 500);
     } catch (err) {
+      clearInterval(simInterval);
       setAttendanceError(err.response?.data?.error || 'Invalid OTP');
-    } finally { setIsFetchingAttendance(false); }
+      setIsFetchingAttendance(false);
+    }
   };
 
   const saveCredentials = async (username, password) => {
@@ -558,6 +614,12 @@ function App() {
     .loading-text { color: var(--text-secondary, #888); font-size: 1.05rem; font-weight: 500; letter-spacing: 0.5px; animation: pulse-text 2s ease-in-out infinite; }
     @keyframes pulse-text { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
+    /* --- INTERACTIVE ATTENDANCE PROGRESS BAR --- */
+    .attendance-loader { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50vh; gap: 1.5rem; width: 100%; max-width: 400px; margin: 0 auto; }
+    .progress-bar-container { width: 100%; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; position: relative; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); }
+    .progress-bar-fill { height: 100%; background: var(--accent-gold); transition: width 0.3s ease; border-radius: 5px; box-shadow: 0 0 10px rgba(219, 163, 21, 0.5); }
+    .progress-text { font-size: 0.95rem; color: #aaa; font-weight: 500; text-align: center; }
+
     /* --- PREMIUM SWIPE NAVIGATION --- */
     .mobile-swipe-hint { display: none; align-items: center; justify-content: center; gap: 6px; color: var(--text-secondary, #888); font-size: 0.78rem; opacity: 0.65; margin: 0 0 0.75rem 0; user-select: none; }
     .timetable-section { touch-action: pan-y; overflow-x: hidden; }
@@ -614,6 +676,11 @@ function App() {
     .btn-banner-secondary:hover { background: rgba(255,255,255,0.1); color: #fff;}
     .btn-banner-close { background: none; border: none; color: #888; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: all 0.2s;}
     .btn-banner-close:hover { background: rgba(255,255,255,0.1); color: #fff;}
+
+    /* --- SECTION MISMATCH BANNER --- */
+    .section-mismatch-banner { display: flex; align-items: center; gap: 12px; background: rgba(219, 163, 21, 0.1); border: 1px solid rgba(219, 163, 21, 0.3); padding: 12px 16px; border-radius: 8px; margin-bottom: 1rem; color: #eee; }
+    .section-mismatch-banner span { flex: 1; font-size: 0.85rem; }
+    .section-mismatch-banner button { background: var(--accent-gold); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; white-space: nowrap; font-weight: 600; }
 
     /* --- LIVE DATA BANNER --- */
     .live-data-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.25); color: #2f6b32; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; margin-bottom: 1rem; }
@@ -766,9 +833,11 @@ function App() {
 
     if (isFetchingAttendance) {
       return (
-        <div className="satisfying-loader-container">
-          <div className="dot-wave"><div className="dot"></div><div className="dot"></div><div className="dot"></div></div>
-          <div className="loading-text">Connecting to OLT Portal...</div>
+        <div className="attendance-loader">
+          <div className="progress-bar-container">
+            <div className="progress-bar-fill" style={{ width: `${scrapeProgress.percent}%` }}></div>
+          </div>
+          <p className="progress-text">{scrapeProgress.text}</p>
         </div>
       );
     }
@@ -785,10 +854,19 @@ function App() {
       <div className="attendance-container">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
            <h2 className="view-title" style={{ margin: 0 }}>Attendance Overview</h2>
-           <div>
+           <div style={{ display: 'flex', gap: '8px' }}>
+             <button onClick={() => setShowCredsForm(true)} className="nav-btn" style={{ margin: 0, padding: '8px 12px', border: '1px solid #ddd' }}><Settings size={14}/> Creds</button>
              <button onClick={fetchAttendance} className="nav-btn" style={{ margin: 0, padding: '8px 12px', border: '1px solid #ddd' }}><RefreshCw size={14}/> Sync</button>
            </div>
         </div>
+
+        {detectedSec && detectedSec !== section && (
+          <div className="section-mismatch-banner">
+            <Info size={18} />
+            <span>Your attendance was found in <strong>Section {detectedSec}</strong>, but your timetable is on <strong>Section {section}</strong>.</span>
+            <button onClick={() => setSection(detectedSec)}>Switch to {detectedSec}</button>
+          </div>
+        )}
 
         {attendanceError && (
           <div style={{ background: '#fff1f0', color: '#d32f2f', padding: '12px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -797,50 +875,60 @@ function App() {
           </div>
         )}
 
-        <div className="attendance-summary-card">
-          <div className="summary-stat">
-            <div className="value">{overallAttended} / {overallTotal}</div>
-            <div className="label">Total Classes</div>
-          </div>
-          <div className="summary-stat">
-            <div className="value" style={{ color: overallPercentage < 80 ? '#ff4d4f' : '#4caf50' }}>{overallPercentage}%</div>
-            <div className="label">Overall Avg</div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {Object.entries(attendanceData || {}).map(([subject, data], idx) => {
-            const isExp = expandedSubject === subject;
-            const pct = parseFloat(data.percentage);
-            const color = pct >= 80 ? '#4caf50' : (pct >= 75 ? '#faad14' : '#ff4d4f');
-            
-            return (
-              <div key={idx} className="subject-card">
-                <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
-                  <div className="subject-title">{subject}</div>
-                  <div className="subject-stats">
-                    <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
-                    <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: color }}></div></div>
-                    <span style={{ color, fontWeight: 'bold', width: '45px', textAlign: 'right' }}>{data.percentage}%</span>
-                    {isExp ? <ChevronUp size={16} color="#888"/> : <ChevronDown size={16} color="#888"/>}
-                  </div>
-                </div>
-                
-                <div className={`class-list ${isExp ? 'expanded' : ''}`}>
-                  {data.classes.map((cls, cIdx) => (
-                    <div key={cIdx} className="class-row">
-                      <span style={{ width: '40px' }}>{cls.class}</span>
-                      <span style={{ flex: 1 }}>{cls.date}</span>
-                      <span style={{ flex: 1 }}>{cls.time}</span>
-                      <span className={`status-badge status-${cls.status.toLowerCase()}`}>{cls.status}</span>
-                    </div>
-                  ))}
-                  {data.classes.length === 0 && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>No records found.</div>}
-                </div>
+        {overallTotal === 0 && !attendanceError ? (
+           <div className="empty-state" style={{ marginTop: '2rem' }}>
+              <h3>No Attendance Records Found</h3>
+              <p>Your roll number was logged in, but no attendance was found. Ensure your classes have started or update your credentials.</p>
+              <button className="btn-cancel" onClick={() => setShowCredsForm(true)} style={{ marginTop: '1rem' }}>Update Credentials</button>
+           </div>
+        ) : (
+          <>
+            <div className="attendance-summary-card">
+              <div className="summary-stat">
+                <div className="value">{overallAttended} / {overallTotal}</div>
+                <div className="label">Total Classes</div>
               </div>
-            );
-          })}
-        </div>
+              <div className="summary-stat">
+                <div className="value" style={{ color: overallPercentage < 80 ? '#ff4d4f' : '#4caf50' }}>{overallPercentage}%</div>
+                <div className="label">Overall Avg</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {Object.entries(attendanceData || {}).map(([subject, data], idx) => {
+                const isExp = expandedSubject === subject;
+                const pct = parseFloat(data.percentage);
+                const color = pct >= 80 ? '#4caf50' : (pct >= 75 ? '#faad14' : '#ff4d4f');
+
+                return (
+                  <div key={idx} className="subject-card">
+                    <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
+                      <div className="subject-title">{subject}</div>
+                      <div className="subject-stats">
+                        <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
+                        <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: color }}></div></div>
+                        <span style={{ color, fontWeight: 'bold', width: '45px', textAlign: 'right' }}>{data.percentage}%</span>
+                        {isExp ? <ChevronUp size={16} color="#888"/> : <ChevronDown size={16} color="#888"/>}
+                      </div>
+                    </div>
+
+                    <div className={`class-list ${isExp ? 'expanded' : ''}`}>
+                      {data.classes.map((cls, cIdx) => (
+                        <div key={cIdx} className="class-row">
+                          <span style={{ width: '40px' }}>{cls.class}</span>
+                          <span style={{ flex: 1 }}>{cls.date}</span>
+                          <span style={{ flex: 1 }}>{cls.time}</span>
+                          <span className={`status-badge status-${cls.status.toLowerCase()}`}>{cls.status}</span>
+                        </div>
+                      ))}
+                      {data.classes.length === 0 && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>No records found.</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     );
   };
@@ -1263,10 +1351,11 @@ function AdminPortal({ injectedStyles }) {
 }
 
 export default App;
+
 // import React, { useState, useEffect, useRef } from 'react';
 // import axios from 'axios';
 // import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-// import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff } from 'lucide-react';
+// import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff, X, Sparkles } from 'lucide-react';
 // import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 // import { Analytics } from '@vercel/analytics/react';
 
@@ -1282,6 +1371,9 @@ export default App;
 // const SWIPE_HINT_STORAGE_KEY = 'iimt_swipe_hint_shown_count';
 // const SWIPE_HINT_AUTO_DISMISS_MS = 3200;
 // const SECTION_STORAGE_KEY = 'iimt_section';
+
+// const BANNER_STORAGE_KEY = 'iimt_attendance_banner_dismissed';
+// const BANNER_START_KEY = 'iimt_attendance_banner_start';
 
 // axios.interceptors.response.use(
 //   (response) => response,
@@ -1351,6 +1443,8 @@ export default App;
 //   const [otpRequired, setOtpRequired] = useState(false);
 //   const [expandedSubject, setExpandedSubject] = useState(null);
 
+//   const [showFeatureBanner, setShowFeatureBanner] = useState(false);
+
 //   const [deferredPrompt, setDeferredPrompt] = useState(null);
 //   const [isInstallable, setIsInstallable] = useState(false);
 //   const [isIOS, setIsIOS] = useState(false);
@@ -1382,6 +1476,48 @@ export default App;
 //       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 //     };
 //   }, []);
+
+//   // --- NEW: Feature Banner 5-Day Logic ---
+//   useEffect(() => {
+//     if (!user) return;
+//     const dismissed = localStorage.getItem(BANNER_STORAGE_KEY);
+//     if (dismissed === 'true') return;
+
+//     let startTime = localStorage.getItem(BANNER_START_KEY);
+//     if (!startTime) {
+//       startTime = Date.now().toString();
+//       localStorage.setItem(BANNER_START_KEY, startTime);
+//     }
+
+//     const elapsedDays = (Date.now() - parseInt(startTime, 10)) / (1000 * 60 * 60 * 24);
+//     if (elapsedDays < 5) {
+//       setShowFeatureBanner(true);
+//     } else {
+//       setShowFeatureBanner(false);
+//     }
+//   }, [user]);
+
+//   const dismissFeatureBanner = () => {
+//     localStorage.setItem(BANNER_STORAGE_KEY, 'true');
+//     setShowFeatureBanner(false);
+//   };
+
+//   const handleShareApp = async () => {
+//     if (navigator.share) {
+//       try {
+//         await navigator.share({
+//           title: 'IIM Trichy PGPM Portal',
+//           text: 'Check out this awesome app to track your live timetable and OLT attendance in one place!',
+//           url: window.location.origin,
+//         });
+//       } catch (err) {
+//         console.log('Share canceled or failed', err);
+//       }
+//     } else {
+//       navigator.clipboard.writeText(window.location.origin);
+//       alert('App link copied to clipboard!');
+//     }
+//   };
 
 //   const handleInstallClick = async () => {
 //     if (isIOS) {
@@ -1757,6 +1893,9 @@ export default App;
 
 //       .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
 //       .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
+      
+//       .feature-banner-actions { flex-direction: column; width: 100%; }
+//       .feature-banner-actions button { width: 100%; justify-content: center; }
 //     }
 
 //     /* --- SATISFYING LOADER ANIMATION --- */
@@ -1816,6 +1955,19 @@ export default App;
 //     .settings-section-btn { padding: 10px 0; border-radius: 8px; border: 1px solid #ddd; background: #fafafa; color: #333; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
 //     .settings-section-btn.active { background: var(--accent-gold); border-color: var(--accent-gold); color: #fff; }
 //     .settings-status-text { font-size: 0.85rem; color: var(--accent-gold); font-weight: 600; }
+
+//     /* --- FEATURE BANNER --- */
+//     .feature-banner { background: linear-gradient(135deg, rgba(219, 163, 21, 0.12), rgba(219, 163, 21, 0.04)); border: 1px solid rgba(219, 163, 21, 0.25); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 10px; color: var(--text-primary, #fff); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+//     .feature-banner-header { display: flex; justify-content: space-between; align-items: flex-start; }
+//     .feature-banner-title { font-size: 1.1rem; font-weight: 700; color: var(--accent-gold); display: flex; align-items: center; gap: 8px; margin: 0; }
+//     .feature-banner-text { font-size: 0.9rem; color: #d0d0d0; margin: 0; line-height: 1.5; }
+//     .feature-banner-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 5px; }
+//     .btn-banner-primary { background: var(--accent-gold); color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; transition: background 0.2s;}
+//     .btn-banner-primary:hover { background: #c59212; }
+//     .btn-banner-secondary { background: rgba(255,255,255,0.05); color: #ddd; border: 1px solid rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 8px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; transition: all 0.2s;}
+//     .btn-banner-secondary:hover { background: rgba(255,255,255,0.1); color: #fff;}
+//     .btn-banner-close { background: none; border: none; color: #888; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: all 0.2s;}
+//     .btn-banner-close:hover { background: rgba(255,255,255,0.1); color: #fff;}
 
 //     /* --- LIVE DATA BANNER --- */
 //     .live-data-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.25); color: #2f6b32; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; margin-bottom: 1rem; }
@@ -2175,6 +2327,35 @@ export default App;
 
 //           {!loading && !error && (
 //             <>
+//               {/* --- 5-DAY FEATURE BANNER --- */}
+//               {showFeatureBanner && activeTab !== 'attendance' && (
+//                 <div className="feature-banner fade-in">
+//                   <div className="feature-banner-header">
+//                     <h3 className="feature-banner-title">
+//                       <Sparkles size={18} fill="currentColor" /> 
+//                       New: Live OLT Attendance
+//                     </h3>
+//                     <button className="btn-banner-close" onClick={dismissFeatureBanner} aria-label="Close">
+//                       <X size={18} />
+//                     </button>
+//                   </div>
+//                   <p className="feature-banner-text">
+//                     You can now track your live class attendance and view detailed class-by-class status directly from the OLT portal!
+//                   </p>
+//                   <div className="feature-banner-actions">
+//                     <button className="btn-banner-primary" onClick={() => setActiveTab('attendance')}>
+//                       <ClipboardCheck size={16} /> Check it out
+//                     </button>
+//                     <button className="btn-banner-secondary" onClick={handleShareApp}>
+//                       <Share size={16} /> Share App
+//                     </button>
+//                     <button className="btn-banner-secondary" onClick={() => setShowFeedbackModal(true)}>
+//                       <MessageSquare size={16} /> Give Feedback
+//                     </button>
+//                   </div>
+//                 </div>
+//               )}
+
 //               {activeTab === 'attendance' && renderAttendanceTab()}
 
 //               {activeTab === 'timetable' && (
