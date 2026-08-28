@@ -315,7 +315,7 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 
 
 // ============================================================
-// OLT SCRAPING ENGINE (Robust Auto-Detect)
+// OLT SCRAPING ENGINE (Fully replicating the Python logic)
 // ============================================================
 
 const activeScrapeSessions = new Map();
@@ -327,6 +327,47 @@ const SUBJECTS = [
     "Business Statistics", "Financial Reporting and Analysis", "Managerial Communication", 
     "Managerial Economics", "Marketing Management -I", "Micro Organizational Behaviour"
 ];
+
+// ============================================================
+// ATTENDANCE FETCH PROGRESS TRACKING (in-memory, per-user)
+// ============================================================
+// Total steps: 1 (connect) + 1 (load report module) + SUBJECTS.length (one per subject)
+const ATTENDANCE_PROGRESS_TOTAL = SUBJECTS.length + 2;
+const attendanceProgress = new Map();
+
+function setAttendanceProgress(userId, step, message, status = 'in_progress') {
+    if (!userId) return;
+    attendanceProgress.set(String(userId), {
+        step,
+        total: ATTENDANCE_PROGRESS_TOTAL,
+        message,
+        status,
+        timestamp: Date.now()
+    });
+}
+
+function clearAttendanceProgressSoon(userId) {
+    if (!userId) return;
+    setTimeout(() => attendanceProgress.delete(String(userId)), 15000);
+}
+
+// Clean up stale progress entries so the map doesn't grow unbounded
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, progress] of attendanceProgress.entries()) {
+        if (now - progress.timestamp > 10 * 60 * 1000) attendanceProgress.delete(id);
+    }
+}, 60 * 1000);
+
+app.get('/api/attendance/progress', authenticateUser, (req, res) => {
+    const progress = attendanceProgress.get(String(req.user.id)) || {
+        step: 0,
+        total: ATTENDANCE_PROGRESS_TOTAL,
+        message: 'Waiting to start…',
+        status: 'idle'
+    };
+    res.json(progress);
+});
 
 class OLTClient {
     constructor() {
@@ -422,6 +463,7 @@ async function dropdownPostback(client, state, field, value) {
     return res.data;
 }
 
+// Mimic Python's manual table extraction to bypass ASP.NET Delta formatting issues
 function extractTableHtml(responseText) {
     const TABLE_ID = "ctl00_Main_AttendanceReport_GridViewAttendanceMerged";
     const marker = `id="${TABLE_ID}"`;
@@ -462,7 +504,7 @@ function extractAttendance(html, rollNo) {
         const $cell = cheerio.load(htmlContent);
         $cell('br').replaceWith('\n');
         
-        const parts = $cell.text().split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+        const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
         
         if (parts.length >= 3) {
             classes.push({ class: parts[0], date: parts[1], time: parts[2] });
@@ -480,10 +522,8 @@ function extractAttendance(html, rollNo) {
     let userRow = null;
     for (let i = 1; i < rows.length; i++) {
         const cells = $(rows[i]).find('td');
-        if (!cells || cells.length === 0) continue;
-        const currentRoll = $(cells[0]).text().replace(/\s+/g, '').trim();
-        const targetRoll = rollNo.replace(/\s+/g, '').trim();
-        if (currentRoll === targetRoll) { 
+        const currentRoll = $(cells[0]).text().replace(/\s+/g, ' ').trim();
+        if (currentRoll === rollNo.trim()) { 
             userRow = cells; 
             break; 
         }
@@ -506,14 +546,18 @@ function extractAttendance(html, rollNo) {
 }
 
 app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
+    const userId = req.user.id;
     try {
-        const user = await User.findById(req.user.id);
+        const user = await User.findById(userId);
         if (!user || !user.oltUsername || !user.oltPassword) {
             return res.status(400).json({ error: 'No credentials saved' });
         }
         
         const username = user.oltUsername;
         const password = decryptText(user.oltPassword);
+        const section = user.defaultSection || 'A';
+
+        setAttendanceProgress(userId, 0, 'Connecting to OLT portal…');
 
         const client = new OLTClient();
         const initial = await client.get(LOGIN_URL);
@@ -529,51 +573,64 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
         state['__LASTFOCUS'] = '';
         state['__ASYNCPOST'] = 'true';
 
+        setAttendanceProgress(userId, 1, 'Verifying your credentials…');
         const loginRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
         const text = loginRes.data;
 
         if (text.includes('TextBoxOTP') || text.includes('OTP') || text.includes('Two-Factor')) {
             const otpState = parseFullForm((await client.get(LOGIN_URL, { 'Referer': LOGIN_URL })).data);
-            activeScrapeSessions.set(req.user.id, { client, state: otpState, username, timestamp: Date.now() });
+            activeScrapeSessions.set(userId, { client, state: otpState, username, section, timestamp: Date.now() });
+            setAttendanceProgress(userId, 1, 'Waiting for your one-time passcode…', 'awaiting_otp');
             return res.json({ requiresOtp: true });
         }
         
         if (!text.includes('pageRedirect||')) {
+            setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error');
+            clearAttendanceProgressSoon(userId);
             return res.status(401).json({ error: 'Invalid OLT Credentials' });
         }
 
-        return await completeScrape(client, username, res);
+        return await completeScrape(client, section, username, res, userId);
     } catch (error) {
         console.error(error);
+        setAttendanceProgress(userId, 0, 'Error connecting to OLT portal.', 'error');
+        clearAttendanceProgressSoon(userId);
         res.status(500).json({ error: 'Error connecting to OLT portal' });
     }
 });
 
 app.post('/api/attendance/verify-otp', authenticateUser, async (req, res) => {
+    const userId = req.user.id;
     try {
         const { otp } = req.body;
-        const session = activeScrapeSessions.get(req.user.id);
+        const session = activeScrapeSessions.get(userId);
         if (!session) return res.status(400).json({ error: 'Session expired. Try again.' });
         
-        const { client, state, username } = session;
+        const { client, state, username, section } = session;
         state['ctl00$Login1$TextBoxOTP'] = otp;
         state['ctl00$Login1$ButtonClose'] = 'Submit';
         
+        setAttendanceProgress(userId, 1, 'Verifying your one-time passcode…');
         const otpRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
-        activeScrapeSessions.delete(req.user.id);
+        activeScrapeSessions.delete(userId);
         
         if (otpRes.data.includes('Invalid') || otpRes.data.includes('TextBoxOTP')) {
+            setAttendanceProgress(userId, 0, 'Invalid one-time passcode.', 'error');
+            clearAttendanceProgressSoon(userId);
             return res.status(401).json({ error: 'Invalid OTP' });
         }
 
-        return await completeScrape(client, username, res);
+        return await completeScrape(client, section, username, res, userId);
     } catch (error) {
+        setAttendanceProgress(userId, 0, 'Error processing OTP.', 'error');
+        clearAttendanceProgressSoon(userId);
         res.status(500).json({ error: 'Error processing OTP' });
     }
 });
 
-async function completeScrape(client, username, res) {
+async function completeScrape(client, section, username, res, userId) {
     try {
+        setAttendanceProgress(userId, 2, 'Loading your attendance report…');
         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
         const state = parseFullForm(attendanceRes.data);
         
@@ -587,38 +644,12 @@ async function completeScrape(client, username, res) {
         }
 
         const results = {};
-        let detectedSection = null;
-        let successfulSubject = null;
-        
-        // 1. Bulletproof Auto-Discovery: Test the first two subjects. If roll no is missing in Subject 1, try Subject 2.
-        const subjectsToTest = [SUBJECTS[0], SUBJECTS[1]]; 
-        
-        for (const testSubj of subjectsToTest) {
-            if (!testSubj) continue;
-            await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', testSubj);
-            
-            for (const sec of ALL_SECTIONS) {
-                const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', sec);
-                const data = extractAttendance(sectionResHtml, username);
-                if (data && data.total > 0) { // Successfully found their row
-                    detectedSection = sec;
-                    successfulSubject = testSubj;
-                    results[testSubj] = data;
-                    break;
-                }
-            }
-            if (detectedSection) break;
-        }
+        for (let i = 0; i < SUBJECTS.length; i++) {
+            const subject = SUBJECTS[i];
+            setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${SUBJECTS.length})…`);
 
-        if (!detectedSection) {
-            return res.status(404).json({ error: `Roll number ${username} not found. Are your credentials correct?` });
-        }
-
-        // 2. Fetch remaining subjects using the correctly detected section
-        for (const subject of SUBJECTS) {
-            if (subject === successfulSubject) continue; // Skip the one we already fetched
             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
-            const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', detectedSection);
+            const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
             
             const attendanceData = extractAttendance(sectionResHtml, username);
             if (attendanceData) {
@@ -626,9 +657,20 @@ async function completeScrape(client, username, res) {
             }
         }
 
-        res.json({ success: true, results, detectedSection });
+        const hasAnyRecord = Object.values(results).some(sub => sub.total > 0);
+        setAttendanceProgress(
+            userId,
+            ATTENDANCE_PROGRESS_TOTAL,
+            hasAnyRecord ? 'Done!' : 'Finished, but no matching records were found.',
+            'done'
+        );
+        clearAttendanceProgressSoon(userId);
+
+        res.json({ success: true, results, section });
     } catch (error) {
         console.error("Scrape Error:", error);
+        setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error');
+        clearAttendanceProgressSoon(userId);
         res.status(500).json({ error: 'Failed to extract attendance data' });
     }
 }

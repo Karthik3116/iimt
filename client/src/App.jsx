@@ -88,9 +88,12 @@ function App() {
   const [showCredsForm, setShowCredsForm] = useState(false);
   const [otpRequired, setOtpRequired] = useState(false);
   const [expandedSubject, setExpandedSubject] = useState(null);
-  
-  const [detectedSec, setDetectedSec] = useState(null); // Found section from OLT
-  const [scrapeProgress, setScrapeProgress] = useState({ percent: 0, text: '' }); // Interactive Progress
+  // Section the currently-shown attendanceData was actually fetched for (backend uses defaultSection,
+  // which can drift from the timetable `section` state below if the user just browsed another section).
+  const [attendanceFetchedSection, setAttendanceFetchedSection] = useState(null);
+  const [fetchProgress, setFetchProgress] = useState({ step: 0, total: 8, message: '', status: 'idle' });
+  const progressPollRef = useRef(null);
+  const isFirstSectionRender = useRef(true);
 
   const [showFeatureBanner, setShowFeatureBanner] = useState(false);
 
@@ -126,7 +129,7 @@ function App() {
     };
   }, []);
 
-  // --- Feature Banner 5-Day Logic ---
+  // --- NEW: Feature Banner 5-Day Logic ---
   useEffect(() => {
     if (!user) return;
     const dismissed = localStorage.getItem(BANNER_STORAGE_KEY);
@@ -227,6 +230,42 @@ function App() {
         .catch(err => console.error("Failed to save section", err));
     }
   }, [section, user]);
+
+  // Attendance is fetched (server-side) for whichever section is saved as the user's account default.
+  // If they change the timetable section they're browsing, any attendance already on screen no longer
+  // reflects the section they're now looking at — clear it so we don't show stale/misleading numbers.
+  useEffect(() => {
+    if (isFirstSectionRender.current) {
+      isFirstSectionRender.current = false;
+      return;
+    }
+    setAttendanceData(null);
+    setAttendanceFetchedSection(null);
+    setAttendanceError('');
+    setOtpRequired(false);
+  }, [section]);
+
+  const stopProgressPolling = () => {
+    if (progressPollRef.current) {
+      clearInterval(progressPollRef.current);
+      progressPollRef.current = null;
+    }
+  };
+
+  const startProgressPolling = () => {
+    stopProgressPolling();
+    const token = localStorage.getItem('iimt_token');
+    progressPollRef.current = setInterval(async () => {
+      try {
+        const res = await axios.get(`${API_BASE_URL}/api/attendance/progress`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.data) setFetchProgress(res.data);
+      } catch (err) { /* polling errors are non-fatal, ignore silently */ }
+    }, 500);
+  };
+
+  useEffect(() => {
+    return () => stopProgressPolling();
+  }, []);
 
   const handleUpdateTodos = async (date, sec, subject, newTodoList) => {
     setTodos(prev => {
@@ -383,86 +422,46 @@ function App() {
     }
   };
 
-  const triggerProgressSimulation = () => {
-    const steps = [
-      'Bypassing ASP.NET Portal...',
-      'Authenticating credentials...',
-      'Auto-detecting your Section...',
-      'Fetching Business Statistics...',
-      'Fetching Financial Reporting...',
-      'Fetching Managerial Communication...',
-      'Fetching Managerial Economics...',
-      'Fetching Marketing Management...',
-      'Fetching Micro Organizational Behaviour...',
-      'Finalizing data...'
-    ];
-    let stepIdx = 0;
-    setProgress({ percent: 5, text: steps[0] });
-
-    return setInterval(() => {
-      setProgress(prev => {
-        let nextPercent = prev.percent + (100 / steps.length) / 6; 
-        if (nextPercent > 98) nextPercent = 98;
-        const targetStep = Math.min(Math.floor(nextPercent / (100 / steps.length)), steps.length - 1);
-        return { percent: nextPercent, text: steps[targetStep] };
-      });
-    }, 200);
-  };
-
   const fetchAttendance = async () => {
     setIsFetchingAttendance(true);
     setAttendanceError('');
     setOtpRequired(false);
-    
-    const simInterval = triggerProgressSimulation();
-
+    setFetchProgress({ step: 0, total: 8, message: 'Connecting to OLT portal…', status: 'in_progress' });
+    const sectionAtFetchTime = section;
+    startProgressPolling();
     try {
       const token = localStorage.getItem('iimt_token');
       const res = await axios.post(`${API_BASE_URL}/api/attendance/fetch`, {}, { headers: { Authorization: `Bearer ${token}` }});
-      
-      clearInterval(simInterval);
-      setScrapeProgress({ percent: 100, text: 'Complete!' });
-
-      setTimeout(() => {
-        if (res.data.requiresOtp) {
-            setOtpRequired(true);
-        } else {
-            setAttendanceData(res.data.results);
-            if (res.data.detectedSection) setDetectedSec(res.data.detectedSection);
-        }
-        setIsFetchingAttendance(false);
-      }, 500);
-
+      if (res.data.requiresOtp) {
+          setOtpRequired(true);
+      } else {
+          setAttendanceData(res.data.results);
+          setAttendanceFetchedSection(res.data.section || sectionAtFetchTime);
+      }
     } catch (err) {
-      clearInterval(simInterval);
       setAttendanceError(err.response?.data?.error || 'Failed to fetch attendance from OLT.');
+    } finally {
       setIsFetchingAttendance(false);
+      stopProgressPolling();
     }
   };
 
   const verifyOtp = async (otp) => {
     setIsFetchingAttendance(true);
     setAttendanceError('');
-    
-    const simInterval = triggerProgressSimulation();
-
+    const sectionAtFetchTime = section;
+    startProgressPolling();
     try {
       const token = localStorage.getItem('iimt_token');
       const res = await axios.post(`${API_BASE_URL}/api/attendance/verify-otp`, { otp }, { headers: { Authorization: `Bearer ${token}` }});
-      
-      clearInterval(simInterval);
-      setScrapeProgress({ percent: 100, text: 'Complete!' });
-
-      setTimeout(() => {
-        setAttendanceData(res.data.results);
-        if (res.data.detectedSection) setDetectedSec(res.data.detectedSection);
-        setOtpRequired(false);
-        setIsFetchingAttendance(false);
-      }, 500);
+      setAttendanceData(res.data.results);
+      setAttendanceFetchedSection(res.data.section || sectionAtFetchTime);
+      setOtpRequired(false);
     } catch (err) {
-      clearInterval(simInterval);
       setAttendanceError(err.response?.data?.error || 'Invalid OTP');
+    } finally {
       setIsFetchingAttendance(false);
+      stopProgressPolling();
     }
   };
 
@@ -614,12 +613,6 @@ function App() {
     .loading-text { color: var(--text-secondary, #888); font-size: 1.05rem; font-weight: 500; letter-spacing: 0.5px; animation: pulse-text 2s ease-in-out infinite; }
     @keyframes pulse-text { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
-    /* --- INTERACTIVE ATTENDANCE PROGRESS BAR --- */
-    .attendance-loader { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50vh; gap: 1.5rem; width: 100%; max-width: 400px; margin: 0 auto; }
-    .progress-bar-container { width: 100%; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; position: relative; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); }
-    .progress-bar-fill { height: 100%; background: var(--accent-gold); transition: width 0.3s ease; border-radius: 5px; box-shadow: 0 0 10px rgba(219, 163, 21, 0.5); }
-    .progress-text { font-size: 0.95rem; color: #aaa; font-weight: 500; text-align: center; }
-
     /* --- PREMIUM SWIPE NAVIGATION --- */
     .mobile-swipe-hint { display: none; align-items: center; justify-content: center; gap: 6px; color: var(--text-secondary, #888); font-size: 0.78rem; opacity: 0.65; margin: 0 0 0.75rem 0; user-select: none; }
     .timetable-section { touch-action: pan-y; overflow-x: hidden; }
@@ -676,11 +669,6 @@ function App() {
     .btn-banner-secondary:hover { background: rgba(255,255,255,0.1); color: #fff;}
     .btn-banner-close { background: none; border: none; color: #888; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: all 0.2s;}
     .btn-banner-close:hover { background: rgba(255,255,255,0.1); color: #fff;}
-
-    /* --- SECTION MISMATCH BANNER --- */
-    .section-mismatch-banner { display: flex; align-items: center; gap: 12px; background: rgba(219, 163, 21, 0.1); border: 1px solid rgba(219, 163, 21, 0.3); padding: 12px 16px; border-radius: 8px; margin-bottom: 1rem; color: #eee; }
-    .section-mismatch-banner span { flex: 1; font-size: 0.85rem; }
-    .section-mismatch-banner button { background: var(--accent-gold); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; white-space: nowrap; font-weight: 600; }
 
     /* --- LIVE DATA BANNER --- */
     .live-data-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.25); color: #2f6b32; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; margin-bottom: 1rem; }
@@ -780,6 +768,21 @@ function App() {
     .status-badge { padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
     .status-p { background: rgba(76, 175, 80, 0.1); color: #2e7d32; }
     .status-a { background: rgba(244, 67, 54, 0.1); color: #d32f2f; }
+    .mismatch-card { max-width: 460px; margin: 3rem auto; }
+
+    /* --- LIVE ATTENDANCE FETCH PROGRESS (calm, low-stress) --- */
+    .attendance-fetch-progress { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 55vh; gap: 1.5rem; width: 100%; max-width: 360px; margin: 0 auto; }
+    .fetch-progress-ring { --pct: 0; position: relative; width: 108px; height: 108px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: conic-gradient(var(--accent-gold, #dba315) calc(var(--pct) * 1%), rgba(219, 163, 21, 0.12) 0); transition: background 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    .fetch-progress-ring::before { content: ''; position: absolute; inset: 8px; border-radius: 50%; background: var(--bg-primary, #fff); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04); }
+    .fetch-progress-ring-label { position: relative; z-index: 1; font-size: 1.3rem; font-weight: 700; color: var(--accent-gold, #dba315); letter-spacing: 0.3px; }
+    .fetch-progress-message { color: var(--text-primary, #333); font-size: 0.98rem; font-weight: 500; text-align: center; min-height: 1.4em; transition: opacity 0.3s ease; letter-spacing: 0.1px; }
+    .fetch-progress-bar-track { width: 100%; height: 6px; border-radius: 4px; background: rgba(219, 163, 21, 0.12); overflow: hidden; }
+    .fetch-progress-bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent-gold, #dba315), #eccb6b); transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    .fetch-progress-steps { display: flex; gap: 6px; }
+    .fetch-progress-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(219, 163, 21, 0.2); transition: background 0.4s ease, transform 0.4s ease; }
+    .fetch-progress-dot.done { background: var(--accent-gold, #dba315); }
+    .fetch-progress-dot.current { background: var(--accent-gold, #dba315); animation: fetchDotPulse 1.1s ease-in-out infinite; }
+    @keyframes fetchDotPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: 0.6; } }
   `;
 
   if (window.location.pathname === '/admin') {
@@ -832,12 +835,23 @@ function App() {
     }
 
     if (isFetchingAttendance) {
+      const total = fetchProgress.total || 8;
+      const step = Math.min(fetchProgress.step || 0, total);
+      const pct = Math.round((step / total) * 100);
       return (
-        <div className="attendance-loader">
-          <div className="progress-bar-container">
-            <div className="progress-bar-fill" style={{ width: `${scrapeProgress.percent}%` }}></div>
+        <div className="attendance-fetch-progress">
+          <div className="fetch-progress-ring" style={{ '--pct': pct }}>
+            <span className="fetch-progress-ring-label">{pct}%</span>
           </div>
-          <p className="progress-text">{scrapeProgress.text}</p>
+          <div className="fetch-progress-message">{fetchProgress.message || 'Connecting to OLT Portal…'}</div>
+          <div className="fetch-progress-bar-track">
+            <div className="fetch-progress-bar-fill" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="fetch-progress-steps">
+            {Array.from({ length: total }).map((_, i) => (
+              <span key={i} className={`fetch-progress-dot ${i < step ? 'done' : ''} ${i === step ? 'current' : ''}`} />
+            ))}
+          </div>
         </div>
       );
     }
@@ -850,23 +864,47 @@ function App() {
     });
     const overallPercentage = overallTotal > 0 ? ((overallAttended / overallTotal) * 100).toFixed(1) : 0;
 
+    const subjectCount = Object.keys(attendanceData || {}).length;
+    const noRecordsMatched = subjectCount === 0 || overallTotal === 0;
+    const sectionMismatch = attendanceFetchedSection && attendanceFetchedSection !== section;
+
+    if (noRecordsMatched) {
+      return (
+        <div className="attendance-container">
+          <div className="creds-card mismatch-card">
+            <AlertCircle size={40} color="var(--accent-gold)" style={{ marginBottom: '1rem' }} />
+            <h3>No Attendance Records Found</h3>
+            {sectionMismatch ? (
+              <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                We fetched attendance for <strong>Section {attendanceFetchedSection}</strong>, but you're currently browsing <strong>Section {section}</strong>. Attendance is always fetched for your actual class section — if that's still {attendanceFetchedSection}, switch the timetable section back below. Otherwise, your OLT credentials may need updating.
+              </p>
+            ) : (
+              <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                We couldn't match your roll number in Section {attendanceFetchedSection || section}'s attendance records. This can happen if you recently browsed a different timetable section, or if your saved OLT credentials have changed.
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {sectionMismatch && (
+                <button className="btn-submit" onClick={() => { setSettingsSectionDraft(attendanceFetchedSection); setShowSettingsModal(true); }}>
+                  Switch back to Section {attendanceFetchedSection}
+                </button>
+              )}
+              <button className="btn-cancel" onClick={fetchAttendance}>Try Again</button>
+              <button className="btn-cancel" onClick={() => setShowCredsForm(true)}>Update Credentials</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="attendance-container">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
            <h2 className="view-title" style={{ margin: 0 }}>Attendance Overview</h2>
-           <div style={{ display: 'flex', gap: '8px' }}>
-             <button onClick={() => setShowCredsForm(true)} className="nav-btn" style={{ margin: 0, padding: '8px 12px', border: '1px solid #ddd' }}><Settings size={14}/> Creds</button>
+           <div>
              <button onClick={fetchAttendance} className="nav-btn" style={{ margin: 0, padding: '8px 12px', border: '1px solid #ddd' }}><RefreshCw size={14}/> Sync</button>
            </div>
         </div>
-
-        {detectedSec && detectedSec !== section && (
-          <div className="section-mismatch-banner">
-            <Info size={18} />
-            <span>Your attendance was found in <strong>Section {detectedSec}</strong>, but your timetable is on <strong>Section {section}</strong>.</span>
-            <button onClick={() => setSection(detectedSec)}>Switch to {detectedSec}</button>
-          </div>
-        )}
 
         {attendanceError && (
           <div style={{ background: '#fff1f0', color: '#d32f2f', padding: '12px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -875,60 +913,50 @@ function App() {
           </div>
         )}
 
-        {overallTotal === 0 && !attendanceError ? (
-           <div className="empty-state" style={{ marginTop: '2rem' }}>
-              <h3>No Attendance Records Found</h3>
-              <p>Your roll number was logged in, but no attendance was found. Ensure your classes have started or update your credentials.</p>
-              <button className="btn-cancel" onClick={() => setShowCredsForm(true)} style={{ marginTop: '1rem' }}>Update Credentials</button>
-           </div>
-        ) : (
-          <>
-            <div className="attendance-summary-card">
-              <div className="summary-stat">
-                <div className="value">{overallAttended} / {overallTotal}</div>
-                <div className="label">Total Classes</div>
-              </div>
-              <div className="summary-stat">
-                <div className="value" style={{ color: overallPercentage < 80 ? '#ff4d4f' : '#4caf50' }}>{overallPercentage}%</div>
-                <div className="label">Overall Avg</div>
-              </div>
-            </div>
+        <div className="attendance-summary-card">
+          <div className="summary-stat">
+            <div className="value">{overallAttended} / {overallTotal}</div>
+            <div className="label">Total Classes</div>
+          </div>
+          <div className="summary-stat">
+            <div className="value" style={{ color: overallPercentage < 80 ? '#ff4d4f' : '#4caf50' }}>{overallPercentage}%</div>
+            <div className="label">Overall Avg</div>
+          </div>
+        </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {Object.entries(attendanceData || {}).map(([subject, data], idx) => {
-                const isExp = expandedSubject === subject;
-                const pct = parseFloat(data.percentage);
-                const color = pct >= 80 ? '#4caf50' : (pct >= 75 ? '#faad14' : '#ff4d4f');
-
-                return (
-                  <div key={idx} className="subject-card">
-                    <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
-                      <div className="subject-title">{subject}</div>
-                      <div className="subject-stats">
-                        <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
-                        <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: color }}></div></div>
-                        <span style={{ color, fontWeight: 'bold', width: '45px', textAlign: 'right' }}>{data.percentage}%</span>
-                        {isExp ? <ChevronUp size={16} color="#888"/> : <ChevronDown size={16} color="#888"/>}
-                      </div>
-                    </div>
-
-                    <div className={`class-list ${isExp ? 'expanded' : ''}`}>
-                      {data.classes.map((cls, cIdx) => (
-                        <div key={cIdx} className="class-row">
-                          <span style={{ width: '40px' }}>{cls.class}</span>
-                          <span style={{ flex: 1 }}>{cls.date}</span>
-                          <span style={{ flex: 1 }}>{cls.time}</span>
-                          <span className={`status-badge status-${cls.status.toLowerCase()}`}>{cls.status}</span>
-                        </div>
-                      ))}
-                      {data.classes.length === 0 && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>No records found.</div>}
-                    </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {Object.entries(attendanceData || {}).map(([subject, data], idx) => {
+            const isExp = expandedSubject === subject;
+            const pct = parseFloat(data.percentage);
+            const color = pct >= 80 ? '#4caf50' : (pct >= 75 ? '#faad14' : '#ff4d4f');
+            
+            return (
+              <div key={idx} className="subject-card">
+                <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
+                  <div className="subject-title">{subject}</div>
+                  <div className="subject-stats">
+                    <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
+                    <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%`, background: color }}></div></div>
+                    <span style={{ color, fontWeight: 'bold', width: '45px', textAlign: 'right' }}>{data.percentage}%</span>
+                    {isExp ? <ChevronUp size={16} color="#888"/> : <ChevronDown size={16} color="#888"/>}
                   </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+                </div>
+                
+                <div className={`class-list ${isExp ? 'expanded' : ''}`}>
+                  {data.classes.map((cls, cIdx) => (
+                    <div key={cIdx} className="class-row">
+                      <span style={{ width: '40px' }}>{cls.class}</span>
+                      <span style={{ flex: 1 }}>{cls.date}</span>
+                      <span style={{ flex: 1 }}>{cls.time}</span>
+                      <span className={`status-badge status-${cls.status.toLowerCase()}`}>{cls.status}</span>
+                    </div>
+                  ))}
+                  {data.classes.length === 0 && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>No records found.</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
