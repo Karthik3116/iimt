@@ -94,6 +94,8 @@ function App() {
   const [todos, setTodos] = useState({});
   const [activeTodoClass, setActiveTodoClass] = useState(null);
 
+  const [isReloading, setIsReloading] = useState(false);
+
   // --- ATTENDANCE STATE ---
   const [hasOltCreds, setHasOltCreds] = useState(false);
   const [showOltPopup, setShowOltPopup] = useState(false);
@@ -805,8 +807,8 @@ function App() {
     .admin-chart-box h3 { margin: 0 0 15px 0; font-size: 1rem; color: #333; display: flex; align-items: center; gap: 8px;}
     
     .css-bar-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 200px; padding-top: 20px; border-bottom: 1px solid #eee; }
-    .css-bar-group { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 12%; }
-    .css-bar { width: 100%; background: var(--accent-gold); border-radius: 4px 4px 0 0; position: relative; min-height: 2px; transition: height 0.5s; }
+    .css-bar-group { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 8px; width: 12%; height: 100%; }
+    .css-bar { width: 100%; background: var(--accent-gold); border-radius: 4px 4px 0 0; position: relative; min-height: 4px; transition: height 0.5s; }
     .css-bar:hover::after { content: attr(data-val); position: absolute; top: -25px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; white-space: nowrap; z-index: 10; }
     .css-bar-label { font-size: 0.7rem; color: #888; text-align: center; }
 
@@ -1066,8 +1068,15 @@ function App() {
 
       {/* --- MOBILE FLOATING REFRESH BUTTON --- */}
       {activeTab === 'timetable' && (
-        <button className="mobile-refresh-fab" onClick={() => { trackEvent('button_click', 'mobile_fab_sync'); fetchTimetable(section, true); }}>
-          <RefreshCw size={22} className={loading ? 'spinning' : ''} />
+        <button 
+          className="mobile-refresh-fab" 
+          onClick={() => { 
+            setIsReloading(true); 
+            trackEvent('button_click', 'mobile_fab_reload'); 
+            setTimeout(() => window.location.reload(), 150); 
+          }}
+        >
+          <RefreshCw size={22} className={isReloading ? 'spinning' : ''} />
         </button>
       )}
 
@@ -1429,9 +1438,9 @@ function AdminPortal({ injectedStyles }) {
 
   const { analytics, users, feedbacks } = authData;
 
-  // Chart Helpers
-  const maxDau = Math.max(...analytics.dau.map(d => d.count), 1);
-  const maxTraffic = Math.max(...analytics.traffic.map(d => d.hits), 1);
+  // Extremely safe chart calculations to prevent NaN if arrays are empty
+  const maxDau = analytics.dau.length > 0 ? Math.max(...analytics.dau.map(d => d.count)) : 1;
+  const maxTraffic = analytics.traffic.length > 0 ? Math.max(...analytics.traffic.map(d => d.hits)) : 1;
 
   return (
     <>
@@ -1474,6 +1483,10 @@ function AdminPortal({ injectedStyles }) {
                    <div className="admin-stat-card">
                      <div className="label">API Hits Today</div>
                      <div className="value">{analytics.traffic.slice(-1)[0]?.hits || 0}</div>
+                   </div>
+                   <div className="admin-stat-card">
+                     <div className="label">OLT Setup Completes</div>
+                     <div className="value">{analytics.oltUsersCount || users.filter(u => u.oltUsername).length}</div>
                    </div>
                 </div>
 

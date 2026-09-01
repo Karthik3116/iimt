@@ -311,6 +311,9 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
         const users = await User.find().sort({ lastActive: -1 }).select('-__v -oltPassword');
         
+        // Count users who have successfully saved their OLT credentials
+        const oltUsersCount = await User.countDocuments({ oltUsername: { $exists: true, $ne: '' } });
+
         // Analytics: Daily Active Users (Last 7 days)
         const dauData = await AnalyticsEvent.aggregate([
             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
@@ -346,7 +349,13 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
             success: true, 
             feedbacks, 
             users,
-            analytics: { dau: dauData, traffic: trafficData, features: featureUsage, interactions }
+            analytics: { 
+                dau: dauData, 
+                traffic: trafficData, 
+                features: featureUsage, 
+                interactions, 
+                oltUsersCount 
+            }
         });
     } catch (error) {
         console.error("Admin Error:", error);
