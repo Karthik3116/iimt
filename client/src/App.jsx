@@ -635,7 +635,7 @@ function App() {
       .swipe-tutorial-overlay { display: flex !important; }
 
       .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
-      .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
+      .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #e2e8f0; flex: none !important; max-height: 350px;}
       
       .feature-banner-actions { flex-direction: column; width: 100%; }
       .feature-banner-actions button { width: 100%; justify-content: center; }
@@ -685,7 +685,7 @@ function App() {
     .swipe-tutorial-dismiss { color: rgba(255, 255, 255, 0.55); font-size: 0.75rem; font-weight: 500; margin-top: 0.15rem; }
 
     /* --- FIX: FORCED TEXT VISIBILITY ON ALL INPUTS & TEXTAREAS --- */
-    .modal-content textarea, .admin-login input, .todo-input-form input { color: #333 !important; background-color: #fff !important; }
+    .modal-content textarea, .todo-input-form input { color: #333 !important; background-color: #fff !important; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; display: flex; align-items: center; justify-content: center; }
     .modal-content { background: white; padding: 2rem; border-radius: 16px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; color: #333; box-shadow: 0 10px 40px rgba(0,0,0,0.2); animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
     @keyframes popIn { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
@@ -776,56 +776,70 @@ function App() {
     .spinning { animation: spin 1s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
 
-    /* --- ADMIN PORTAL DASHBOARD LAYOUT & CHARTS --- */
-    .admin-container-fluid { font-family: sans-serif; color: #333; height: 100vh; background: #f5f5f5;}
-    .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff;}
-    .admin-login input { padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc; }
-    .admin-login button { background: var(--accent-gold); color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    /* --- ADMIN PORTAL DASHBOARD LAYOUT & CHARTS (REVAMPED) --- */
+    .admin-container-fluid { font-family: 'Inter', system-ui, sans-serif; color: #0f172a; height: 100vh; background: #f8fafc; }
+    .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #f8fafc; }
+    .admin-login-box { background: white; padding: 3rem; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); text-align: center; width: 90%; max-width: 400px; }
+    .admin-login input { padding: 12px; margin-bottom: 12px; border-radius: 8px; border: 1px solid #cbd5e1; width: 100%; color: #0f172a; background: #fff; box-sizing: border-box; }
+    .admin-login button { background: var(--accent-gold); color: white; padding: 12px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; transition: opacity 0.2s; }
+    .admin-login button:hover { opacity: 0.9; }
     
-    .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; }
-    .admin-sidebar { width: 300px; background: white; border-right: 1px solid #eee; display: flex; flex-direction: column; }
+    .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; background: #f8fafc; }
+    .admin-sidebar { width: 280px; background: #ffffff; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 2px 0 10px rgba(0,0,0,0.02); z-index: 10; }
     
-    .admin-tabs { display: flex; flex-direction: column; gap: 10px; margin-top: 1.5rem; }
-    .admin-tab { background: none; border: none; padding: 12px 16px; font-size: 1rem; font-weight: 600; color: #888; cursor: pointer; border-radius: 8px; transition: all 0.2s; text-align: left; display: flex; align-items: center; }
+    .admin-tabs { display: flex; flex-direction: column; gap: 8px; margin-top: 1.5rem; }
+    .admin-tab { background: transparent; border: none; padding: 14px 20px; font-size: 0.95rem; font-weight: 600; color: #64748b; cursor: pointer; border-radius: 10px; transition: all 0.2s ease; text-align: left; display: flex; align-items: center; }
     .admin-tab.active { background: rgba(219,163,21,0.1); color: var(--accent-gold); }
-    .admin-tab:hover:not(.active) { background: #f5f5f5; }
+    .admin-tab:hover:not(.active) { background: #f1f5f9; color: #0f172a; }
 
-    .admin-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fafafa;}
-    .admin-main-header { padding: 1.5rem; border-bottom: 1px solid #eee; background: white; display: flex; justify-content: space-between; align-items: center;}
-    .admin-main-content { flex: 1; overflow-y: auto; padding: 2rem; }
+    .admin-main-content { flex: 1; overflow-y: auto; padding: 2.5rem; }
+    .admin-header-title { font-size: 1.75rem; font-weight: 700; color: #0f172a; margin: 0 0 1.5rem 0; }
     
     /* Stats grid */
-    .admin-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
-    .admin-stat-card { background: white; padding: 20px; border-radius: 12px; border: 1px solid #eee; display: flex; flex-direction: column; gap: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.02); }
-    .admin-stat-card .label { font-size: 0.85rem; color: #666; font-weight: 600; text-transform: uppercase;}
-    .admin-stat-card .value { font-size: 2rem; font-weight: bold; color: var(--accent-gold); }
+    .admin-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px; }
+    .admin-stat-card { background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+    .admin-stat-card .label { font-size: 0.85rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .admin-stat-card .value { font-size: 2.2rem; font-weight: 800; color: #0f172a; }
+    .admin-stat-card .value.gold { color: var(--accent-gold); }
 
     /* CSS Charts */
-    .admin-charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; margin-bottom: 25px; }
+    .admin-charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 24px; margin-bottom: 30px; }
     @media (max-width: 768px) { .admin-charts-container { grid-template-columns: 1fr; } }
-    .admin-chart-box { background: white; padding: 20px; border-radius: 12px; border: 1px solid #eee; box-shadow: 0 2px 10px rgba(0,0,0,0.02); }
-    .admin-chart-box h3 { margin: 0 0 15px 0; font-size: 1rem; color: #333; display: flex; align-items: center; gap: 8px;}
+    .admin-chart-box { background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+    .admin-chart-box h3 { margin: 0 0 20px 0; font-size: 1.1rem; color: #0f172a; display: flex; align-items: center; gap: 10px; font-weight: 700; }
     
-    .css-bar-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 200px; padding-top: 20px; border-bottom: 1px solid #eee; }
-    .css-bar-group { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 8px; width: 12%; height: 100%; }
-    .css-bar { width: 100%; background: var(--accent-gold); border-radius: 4px 4px 0 0; position: relative; min-height: 4px; transition: height 0.5s; }
-    .css-bar:hover::after { content: attr(data-val); position: absolute; top: -25px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; white-space: nowrap; z-index: 10; }
-    .css-bar-label { font-size: 0.7rem; color: #888; text-align: center; }
+    .css-bar-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 220px; padding-top: 30px; border-bottom: 2px solid #f1f5f9; }
+    .css-bar-group { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 10px; width: 12%; height: 100%; }
+    .css-bar { width: 100%; background: var(--accent-gold); border-radius: 6px 6px 0 0; position: relative; min-height: 4px; transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    .css-bar.green { background: #10b981; }
+    .css-bar:hover::after { content: attr(data-val); position: absolute; top: -32px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; z-index: 10; }
+    .css-bar-label { font-size: 0.75rem; color: #64748b; font-weight: 500; text-align: center; }
 
     /* Lists */
-    .interaction-list { display: flex; flex-direction: column; gap: 10px; }
-    .interaction-row { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f9f9f9; border-radius: 8px; border: 1px solid #eee; }
-    .interaction-row-name { font-weight: 600; font-size: 0.9rem; color: #333; display: flex; align-items: center; gap: 8px;}
-    .interaction-row-count { background: rgba(219,163,21,0.1); color: var(--accent-gold); padding: 4px 10px; border-radius: 20px; font-weight: bold; font-size: 0.8rem;}
+    .interaction-list { display: flex; flex-direction: column; gap: 12px; }
+    .interaction-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; transition: background 0.2s; }
+    .interaction-row:hover { background: #f1f5f9; }
+    .interaction-row-name { font-weight: 600; font-size: 0.95rem; color: #334155; display: flex; align-items: center; gap: 8px;}
+    .interaction-row-count { background: #ffffff; color: var(--accent-gold); padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 0.85rem; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.02);}
 
-    .active-user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 8px; transition: background 0.2s;}
-    .active-user-card:hover { background: #f9f9f9; }
-    .active-user-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+    /* User Database Cards */
+    .active-user-card { display: flex; align-items: center; gap: 15px; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; background: #ffffff; margin-bottom: 12px; transition: all 0.2s ease;}
+    .active-user-card:hover { border-color: #cbd5e1; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); transform: translateY(-1px); }
+    .active-user-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #f1f5f9; }
     .active-user-info { flex: 1; overflow: hidden; }
-    .active-user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-    .active-user-time { font-size: 0.75rem; color: #666; }
+    .active-user-name { font-weight: 700; font-size: 1rem; color: #0f172a; margin-bottom: 4px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+    .active-user-email { font-size: 0.85rem; color: #64748b; display: flex; align-items: center; gap: 6px; }
+    .active-user-time { text-align: right; }
+    .active-user-time-val { font-size: 0.9rem; font-weight: 600; color: #334155; }
+    .active-user-time-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+    .online-indicator { display: inline-block; width: 8px; height: 8px; background: #10b981; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 0 2px #d1fae5; }
     
-    .feedback-card { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid var(--accent-gold); color: #333; box-shadow: 0 2px 8px rgba(0,0,0,0.05);}
+    /* Feedback Cards */
+    .feedback-card { background: #fefce8; padding: 20px; margin-bottom: 16px; border-radius: 12px; border: 1px solid #fef08a; border-left: 5px solid var(--accent-gold); color: #0f172a; box-shadow: 0 2px 4px rgba(0,0,0,0.02);}
+    .feedback-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .feedback-name { font-weight: 700; font-size: 1rem; color: #0f172a; }
+    .feedback-time { font-size: 0.8rem; color: #854d0e; font-weight: 500; }
+    .feedback-msg { margin: 0; font-size: 0.95rem; color: #334155; white-space: pre-wrap; line-height: 1.5; }
 
     /* --- ATTENDANCE UI --- */
     .attendance-container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.2rem; }
@@ -1422,16 +1436,28 @@ function AdminPortal({ injectedStyles }) {
     }
   };
 
+  const timeAgo = (date) => {
+    if (!date) return "Never";
+    const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+    if (seconds < 60) return "Just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr${hours !== 1 ? 's' : ''} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days !== 1 ? 's' : ''} ago`;
+  };
+
   if (!authData) return (
-    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#f5f5f5'}}>
-      <div style={{background: '#fff', padding: '3rem', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', textAlign: 'center'}}>
+    <div className="admin-login">
+      <div className="admin-login-box">
         <Lock size={48} color="var(--accent-gold)" style={{marginBottom: '1rem'}} />
-        <h2>Admin Portal</h2>
-        <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '1.5rem', width: '300px'}}>
-          <input type="password" placeholder="Admin Password" value={password} onChange={e=>setPassword(e.target.value)} style={{padding: '12px', border: '1px solid #ddd', borderRadius: '8px'}} />
-          <button type="submit" style={{background: 'var(--accent-gold)', color: '#fff', padding: '12px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold'}}>{loading ? 'Verifying...' : 'Login'}</button>
+        <h2 style={{color: '#0f172a', margin: '0 0 1.5rem 0'}}>Admin Portal</h2>
+        <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column'}}>
+          <input type="password" placeholder="Admin Password" value={password} onChange={e=>setPassword(e.target.value)} />
+          <button type="submit">{loading ? 'Verifying...' : 'Login'}</button>
         </form>
-        {error && <p style={{color: 'red', fontSize: '0.9rem', marginTop: '1rem'}}>{error}</p>}
+        {error && <p style={{color: '#ef4444', fontSize: '0.9rem', marginTop: '1rem', fontWeight: 500}}>{error}</p>}
       </div>
     </div>
   );
@@ -1460,7 +1486,7 @@ function AdminPortal({ injectedStyles }) {
            </div>
            
            <div style={{marginTop: 'auto', paddingTop: '2rem'}}>
-             <button onClick={() => setAuthData(null)} style={{width: '100%', padding: '10px', border: 'none', background: '#ffebee', color: '#c62828', borderRadius: '8px', cursor: 'pointer', fontWeight: 600}}>
+             <button onClick={() => setAuthData(null)} style={{width: '100%', padding: '12px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '10px', cursor: 'pointer', fontWeight: 700}}>
                Logout
              </button>
            </div>
@@ -1469,12 +1495,12 @@ function AdminPortal({ injectedStyles }) {
         <main className="admin-main-content">
           {adminTab === 'overview' && (
              <div>
-                <h2 style={{marginTop: 0, marginBottom: '20px'}}>Dashboard Overview</h2>
+                <h2 className="admin-header-title">Dashboard Overview</h2>
                 
                 <div className="admin-stats-grid">
                    <div className="admin-stat-card">
                      <div className="label">Total Users</div>
-                     <div className="value">{users.length}</div>
+                     <div className="value gold">{users.length}</div>
                    </div>
                    <div className="admin-stat-card">
                      <div className="label">Active Today</div>
@@ -1494,7 +1520,7 @@ function AdminPortal({ injectedStyles }) {
                    <div className="admin-chart-box">
                       <h3><Activity size={18}/> Daily Active Users (7 Days)</h3>
                       <div className="css-bar-chart">
-                        {analytics.dau.length === 0 ? <p style={{color: '#888', alignSelf:'center'}}>No data</p> : 
+                        {analytics.dau.length === 0 ? <p style={{color: '#64748b', alignSelf:'center'}}>No data</p> : 
                          analytics.dau.map((d, i) => (
                           <div className="css-bar-group" key={i}>
                              <div className="css-bar" style={{height: `${(d.count / maxDau) * 100}%`}} data-val={d.count}></div>
@@ -1507,10 +1533,10 @@ function AdminPortal({ injectedStyles }) {
                    <div className="admin-chart-box">
                       <h3><Activity size={18}/> Server Traffic (API Hits)</h3>
                       <div className="css-bar-chart">
-                        {analytics.traffic.length === 0 ? <p style={{color: '#888', alignSelf:'center'}}>No data</p> : 
+                        {analytics.traffic.length === 0 ? <p style={{color: '#64748b', alignSelf:'center'}}>No data</p> : 
                          analytics.traffic.map((d, i) => (
                           <div className="css-bar-group" key={i}>
-                             <div className="css-bar" style={{height: `${(d.hits / maxTraffic) * 100}%`, background: '#4caf50'}} data-val={d.hits}></div>
+                             <div className="css-bar green" style={{height: `${(d.hits / maxTraffic) * 100}%`}} data-val={d.hits}></div>
                              <div className="css-bar-label">{d.date.split('-').slice(1).join('/')}</div>
                           </div>
                         ))}
@@ -1522,7 +1548,7 @@ function AdminPortal({ injectedStyles }) {
                   <div className="admin-chart-box">
                      <h3><MousePointer2 size={18}/> Feature Usage</h3>
                      <div className="interaction-list">
-                       {analytics.features.length === 0 ? <p style={{color: '#888'}}>No data</p> : analytics.features.map(f => (
+                       {analytics.features.length === 0 ? <p style={{color: '#64748b'}}>No data</p> : analytics.features.map(f => (
                          <div className="interaction-row" key={f._id}>
                            <div className="interaction-row-name">{f._id.replace('tab_', '').toUpperCase()}</div>
                            <div className="interaction-row-count">{f.clicks} views</div>
@@ -1533,10 +1559,10 @@ function AdminPortal({ injectedStyles }) {
                   <div className="admin-chart-box">
                      <h3><MousePointer2 size={18}/> Top Button Interactions</h3>
                      <div className="interaction-list">
-                       {analytics.interactions.length === 0 ? <p style={{color: '#888'}}>No data</p> : analytics.interactions.map(f => (
+                       {analytics.interactions.length === 0 ? <p style={{color: '#64748b'}}>No data</p> : analytics.interactions.map(f => (
                          <div className="interaction-row" key={f._id}>
-                           <div className="interaction-row-name" style={{color: '#555'}}>{f._id.replace(/_/g, ' ')}</div>
-                           <div className="interaction-row-count" style={{background: '#f0f0f0', color: '#333'}}>{f.count} taps</div>
+                           <div className="interaction-row-name">{f._id.replace(/_/g, ' ')}</div>
+                           <div className="interaction-row-count" style={{background: '#f1f5f9', color: '#0f172a'}}>{f.count} taps</div>
                          </div>
                        ))}
                      </div>
@@ -1546,32 +1572,40 @@ function AdminPortal({ injectedStyles }) {
           )}
 
           {adminTab === 'users' && (
-             <div style={{display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
-                <div className="admin-chart-box" style={{flex: 1, minWidth: '300px'}}>
-                  <h3 style={{marginTop: 0}}>User Database</h3>
-                  <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
-                     {users.map(u => (
-                        <div key={u._id} style={{display: 'flex', alignItems: 'center', gap: '15px', padding: '10px', background: '#f9f9f9', borderRadius: '8px', border: '1px solid #eee'}}>
-                           <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} style={{width: 40, height: 40, borderRadius: '50%'}} alt=""/>
-                           <div style={{flex: 1}}>
-                             <div style={{fontWeight: 600}}>{u.name}</div>
-                             <div style={{fontSize: '0.8rem', color: '#666'}}>{u.email} · Sec {u.defaultSection}</div>
-                           </div>
-                           <div style={{fontSize: '0.8rem', color: '#888', textAlign: 'right'}}>
-                              Last active:<br/>{new Date(u.lastActive).toLocaleDateString()}
-                           </div>
-                        </div>
-                     ))}
+             <div style={{display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
+                <div className="admin-chart-box" style={{flex: 1, minWidth: '320px', padding: '24px 0'}}>
+                  <h3 style={{margin: '0 24px 20px 24px'}}>User Database</h3>
+                  <div style={{display: 'flex', flexDirection: 'column', padding: '0 24px'}}>
+                     {users.map(u => {
+                        const timeAgoStr = timeAgo(u.lastActive);
+                        const isOnline = timeAgoStr === "Just now" || timeAgoStr.includes("min");
+                        
+                        return (
+                          <div key={u._id} className="active-user-card">
+                             <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} className="active-user-avatar" alt=""/>
+                             <div className="active-user-info">
+                               <div className="active-user-name">{u.name}</div>
+                               <div className="active-user-email">{u.email} &middot; Sec {u.defaultSection}</div>
+                             </div>
+                             <div className="active-user-time">
+                                <div className="active-user-time-val">{isOnline && <span className="online-indicator"></span>}{timeAgoStr}</div>
+                                <div className="active-user-time-label">Last Active</div>
+                             </div>
+                          </div>
+                        )
+                     })}
                   </div>
                 </div>
 
-                <div className="admin-chart-box" style={{width: '100%', maxWidth: '400px'}}>
+                <div className="admin-chart-box" style={{width: '100%', maxWidth: '420px', padding: '24px'}}>
                   <h3 style={{marginTop: 0}}>Recent Feedback</h3>
-                  {feedbacks.length === 0 ? <p style={{color: '#888'}}>No feedback yet.</p> : feedbacks.map(f => (
-                     <div key={f._id} style={{padding: '15px', background: '#fff9e6', borderLeft: '4px solid var(--accent-gold)', borderRadius: '4px', marginBottom: '10px'}}>
-                        <div style={{fontWeight: 600, fontSize: '0.9rem'}}>{f.userName}</div>
-                        <div style={{fontSize: '0.75rem', color: '#888', marginBottom: '8px'}}>{new Date(f.createdAt).toLocaleString()}</div>
-                        <p style={{margin: 0, fontSize: '0.9rem', color: '#333', whiteSpace: 'pre-wrap'}}>{f.message}</p>
+                  {feedbacks.length === 0 ? <p style={{color: '#64748b'}}>No feedback yet.</p> : feedbacks.map(f => (
+                     <div key={f._id} className="feedback-card">
+                        <div className="feedback-header">
+                          <div className="feedback-name">{f.userName}</div>
+                          <div className="feedback-time">{new Date(f.createdAt).toLocaleString()}</div>
+                        </div>
+                        <p className="feedback-msg">{f.message}</p>
                      </div>
                   ))}
                 </div>
