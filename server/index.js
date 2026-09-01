@@ -99,6 +99,23 @@ const todoSchema = new mongoose.Schema({
 todoSchema.index({ userEmail: 1, date: 1, section: 1, subject: 1 }, { unique: true });
 const Todo = mongoose.model('Todo', todoSchema);
 
+// --- NEW: ANALYTICS & TRAFFIC SCHEMAS ---
+const trafficLogSchema = new mongoose.Schema({
+    endpoint: String,
+    method: String,
+    timestamp: { type: Date, default: Date.now, expires: '30d' } // Auto-delete after 30 days
+});
+const TrafficLog = mongoose.model('TrafficLog', trafficLogSchema);
+
+const analyticsEventSchema = new mongoose.Schema({
+    userEmail: String,
+    eventType: String, // e.g., 'click', 'view', 'action'
+    eventName: String, // e.g., 'tab_attendance', 'btn_sync'
+    metadata: mongoose.Schema.Types.Mixed,
+    timestamp: { type: Date, default: Date.now, expires: '90d' } // Auto-delete after 90 days
+});
+const AnalyticsEvent = mongoose.model('AnalyticsEvent', analyticsEventSchema);
+
 // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
 const ENCRYPTION_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'iimtrichy_fallback_secret', 'salt', 32);
 const ALGORITHM = 'aes-256-cbc';
@@ -131,7 +148,15 @@ const GOOGLE_CLIENT_ID = '22723173918-29qq25jdlpd7kmoeuk8682p0if6vm4gb.apps.goog
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 
-// --- AUTHENTICATION MIDDLEWARE WITH ACTIVITY TRACKING ---
+// --- AUTHENTICATION & TRAFFIC MIDDLEWARE ---
+app.use((req, res, next) => {
+    // Log API Traffic (exclude admin/analytics endpoints to avoid noise)
+    if (req.path.startsWith('/api') && !req.path.includes('/admin') && !req.path.includes('/analytics') && !req.path.includes('/attendance/progress')) {
+        TrafficLog.create({ endpoint: req.path, method: req.method }).catch(() => {});
+    }
+    next();
+});
+
 const authenticateUser = (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -172,9 +197,11 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
             user = new User({ name, email, picture, lastActive: new Date() });
             await user.save();
             console.log(`New user registered: ${email}`);
+            AnalyticsEvent.create({ userEmail: email, eventType: 'auth', eventName: 'new_signup' }).catch(()=>{});
         } else {
             user.lastActive = new Date();
             await user.save();
+            AnalyticsEvent.create({ userEmail: email, eventType: 'auth', eventName: 'login' }).catch(()=>{});
         }
 
         const sessionToken = jwt.sign(
@@ -233,6 +260,7 @@ app.post('/api/user/olt-credentials', authenticateUser, async (req, res) => {
             oltUsername: username,
             oltPassword: encryptText(password)
         });
+        AnalyticsEvent.create({ userEmail: req.user.email, eventType: 'action', eventName: 'save_olt_creds' }).catch(()=>{});
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Failed to save credentials' });
@@ -250,10 +278,26 @@ app.post('/api/feedback', authenticateUser, async (req, res) => {
     try {
         const newFeedback = new Feedback({ userEmail: email, userName: name, message });
         await newFeedback.save();
+        AnalyticsEvent.create({ userEmail: email, eventType: 'action', eventName: 'submit_feedback' }).catch(()=>{});
         res.json({ success: true, message: "Feedback submitted successfully." });
     } catch (error) {
         console.error("Feedback Error:", error);
         res.status(500).json({ error: "Server error saving feedback." });
+    }
+});
+
+app.post('/api/analytics', authenticateUser, async (req, res) => {
+    const { eventType, eventName, metadata } = req.body;
+    try {
+        await AnalyticsEvent.create({
+            userEmail: req.user.email,
+            eventType: eventType || 'interaction',
+            eventName: eventName || 'unknown',
+            metadata: metadata || {}
+        });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to log event' });
     }
 });
 
@@ -265,9 +309,47 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
     }
     try {
         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
-        const users = await User.find().sort({ lastActive: -1 }).select('-__v');
-        res.json({ success: true, feedbacks, users });
+        const users = await User.find().sort({ lastActive: -1 }).select('-__v -oltPassword');
+        
+        // Analytics: Daily Active Users (Last 7 days)
+        const dauData = await AnalyticsEvent.aggregate([
+            { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, uniqueUsers: { $addToSet: "$userEmail" } } },
+            { $project: { date: "$_id", count: { $size: "$uniqueUsers" } } },
+            { $sort: { date: 1 } }
+        ]);
+
+        // Analytics: Server Traffic (Last 7 days)
+        const trafficData = await TrafficLog.aggregate([
+            { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, hits: { $sum: 1 } } },
+            { $project: { date: "$_id", hits: 1 } },
+            { $sort: { date: 1 } }
+        ]);
+
+        // Analytics: Feature Usage
+        const featureUsage = await AnalyticsEvent.aggregate([
+            { $match: { eventType: 'tab_click' } },
+            { $group: { _id: "$eventName", clicks: { $sum: 1 } } },
+            { $sort: { clicks: -1 } }
+        ]);
+
+        // Analytics: Button Clicks
+        const interactions = await AnalyticsEvent.aggregate([
+            { $match: { eventType: 'button_click' } },
+            { $group: { _id: "$eventName", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 10 }
+        ]);
+
+        res.json({ 
+            success: true, 
+            feedbacks, 
+            users,
+            analytics: { dau: dauData, traffic: trafficData, features: featureUsage, interactions }
+        });
     } catch (error) {
+        console.error("Admin Error:", error);
         res.status(500).json({ error: "Server error fetching admin data." });
     }
 });
@@ -463,7 +545,6 @@ async function dropdownPostback(client, state, field, value) {
     return res.data;
 }
 
-// Mimic Python's manual table extraction to bypass ASP.NET Delta formatting issues
 function extractTableHtml(responseText) {
     const TABLE_ID = "ctl00_Main_AttendanceReport_GridViewAttendanceMerged";
     const marker = `id="${TABLE_ID}"`;
@@ -1415,6 +1496,47 @@ app.listen(PORT, () => {
 //     "Managerial Economics", "Marketing Management -I", "Micro Organizational Behaviour"
 // ];
 
+// // ============================================================
+// // ATTENDANCE FETCH PROGRESS TRACKING (in-memory, per-user)
+// // ============================================================
+// // Total steps: 1 (connect) + 1 (load report module) + SUBJECTS.length (one per subject)
+// const ATTENDANCE_PROGRESS_TOTAL = SUBJECTS.length + 2;
+// const attendanceProgress = new Map();
+
+// function setAttendanceProgress(userId, step, message, status = 'in_progress') {
+//     if (!userId) return;
+//     attendanceProgress.set(String(userId), {
+//         step,
+//         total: ATTENDANCE_PROGRESS_TOTAL,
+//         message,
+//         status,
+//         timestamp: Date.now()
+//     });
+// }
+
+// function clearAttendanceProgressSoon(userId) {
+//     if (!userId) return;
+//     setTimeout(() => attendanceProgress.delete(String(userId)), 15000);
+// }
+
+// // Clean up stale progress entries so the map doesn't grow unbounded
+// setInterval(() => {
+//     const now = Date.now();
+//     for (const [id, progress] of attendanceProgress.entries()) {
+//         if (now - progress.timestamp > 10 * 60 * 1000) attendanceProgress.delete(id);
+//     }
+// }, 60 * 1000);
+
+// app.get('/api/attendance/progress', authenticateUser, (req, res) => {
+//     const progress = attendanceProgress.get(String(req.user.id)) || {
+//         step: 0,
+//         total: ATTENDANCE_PROGRESS_TOTAL,
+//         message: 'Waiting to start…',
+//         status: 'idle'
+//     };
+//     res.json(progress);
+// });
+
 // class OLTClient {
 //     constructor() {
 //         this.cookies = {};
@@ -1592,8 +1714,9 @@ app.listen(PORT, () => {
 // }
 
 // app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
+//     const userId = req.user.id;
 //     try {
-//         const user = await User.findById(req.user.id);
+//         const user = await User.findById(userId);
 //         if (!user || !user.oltUsername || !user.oltPassword) {
 //             return res.status(400).json({ error: 'No credentials saved' });
 //         }
@@ -1601,6 +1724,8 @@ app.listen(PORT, () => {
 //         const username = user.oltUsername;
 //         const password = decryptText(user.oltPassword);
 //         const section = user.defaultSection || 'A';
+
+//         setAttendanceProgress(userId, 0, 'Connecting to OLT portal…');
 
 //         const client = new OLTClient();
 //         const initial = await client.get(LOGIN_URL);
@@ -1616,51 +1741,64 @@ app.listen(PORT, () => {
 //         state['__LASTFOCUS'] = '';
 //         state['__ASYNCPOST'] = 'true';
 
+//         setAttendanceProgress(userId, 1, 'Verifying your credentials…');
 //         const loginRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
 //         const text = loginRes.data;
 
 //         if (text.includes('TextBoxOTP') || text.includes('OTP') || text.includes('Two-Factor')) {
 //             const otpState = parseFullForm((await client.get(LOGIN_URL, { 'Referer': LOGIN_URL })).data);
-//             activeScrapeSessions.set(req.user.id, { client, state: otpState, username, section, timestamp: Date.now() });
+//             activeScrapeSessions.set(userId, { client, state: otpState, username, section, timestamp: Date.now() });
+//             setAttendanceProgress(userId, 1, 'Waiting for your one-time passcode…', 'awaiting_otp');
 //             return res.json({ requiresOtp: true });
 //         }
         
 //         if (!text.includes('pageRedirect||')) {
+//             setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error');
+//             clearAttendanceProgressSoon(userId);
 //             return res.status(401).json({ error: 'Invalid OLT Credentials' });
 //         }
 
-//         return await completeScrape(client, section, username, res);
+//         return await completeScrape(client, section, username, res, userId);
 //     } catch (error) {
 //         console.error(error);
+//         setAttendanceProgress(userId, 0, 'Error connecting to OLT portal.', 'error');
+//         clearAttendanceProgressSoon(userId);
 //         res.status(500).json({ error: 'Error connecting to OLT portal' });
 //     }
 // });
 
 // app.post('/api/attendance/verify-otp', authenticateUser, async (req, res) => {
+//     const userId = req.user.id;
 //     try {
 //         const { otp } = req.body;
-//         const session = activeScrapeSessions.get(req.user.id);
+//         const session = activeScrapeSessions.get(userId);
 //         if (!session) return res.status(400).json({ error: 'Session expired. Try again.' });
         
 //         const { client, state, username, section } = session;
 //         state['ctl00$Login1$TextBoxOTP'] = otp;
 //         state['ctl00$Login1$ButtonClose'] = 'Submit';
         
+//         setAttendanceProgress(userId, 1, 'Verifying your one-time passcode…');
 //         const otpRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
-//         activeScrapeSessions.delete(req.user.id);
+//         activeScrapeSessions.delete(userId);
         
 //         if (otpRes.data.includes('Invalid') || otpRes.data.includes('TextBoxOTP')) {
+//             setAttendanceProgress(userId, 0, 'Invalid one-time passcode.', 'error');
+//             clearAttendanceProgressSoon(userId);
 //             return res.status(401).json({ error: 'Invalid OTP' });
 //         }
 
-//         return await completeScrape(client, section, username, res);
+//         return await completeScrape(client, section, username, res, userId);
 //     } catch (error) {
+//         setAttendanceProgress(userId, 0, 'Error processing OTP.', 'error');
+//         clearAttendanceProgressSoon(userId);
 //         res.status(500).json({ error: 'Error processing OTP' });
 //     }
 // });
 
-// async function completeScrape(client, section, username, res) {
+// async function completeScrape(client, section, username, res, userId) {
 //     try {
+//         setAttendanceProgress(userId, 2, 'Loading your attendance report…');
 //         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
 //         const state = parseFullForm(attendanceRes.data);
         
@@ -1674,7 +1812,10 @@ app.listen(PORT, () => {
 //         }
 
 //         const results = {};
-//         for (const subject of SUBJECTS) {
+//         for (let i = 0; i < SUBJECTS.length; i++) {
+//             const subject = SUBJECTS[i];
+//             setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${SUBJECTS.length})…`);
+
 //             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
 //             const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
             
@@ -1684,9 +1825,20 @@ app.listen(PORT, () => {
 //             }
 //         }
 
-//         res.json({ success: true, results });
+//         const hasAnyRecord = Object.values(results).some(sub => sub.total > 0);
+//         setAttendanceProgress(
+//             userId,
+//             ATTENDANCE_PROGRESS_TOTAL,
+//             hasAnyRecord ? 'Done!' : 'Finished, but no matching records were found.',
+//             'done'
+//         );
+//         clearAttendanceProgressSoon(userId);
+
+//         res.json({ success: true, results, section });
 //     } catch (error) {
 //         console.error("Scrape Error:", error);
+//         setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error');
+//         clearAttendanceProgressSoon(userId);
 //         res.status(500).json({ error: 'Failed to extract attendance data' });
 //     }
 // }
