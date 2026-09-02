@@ -10,6 +10,9 @@ import {
 import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 import { Analytics } from '@vercel/analytics/react';
 
+// Import modularized Admin component
+import AdminPortal from './Admin';
+
 import './App.css';
 
 const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
@@ -1411,218 +1414,17 @@ function OTPForm({ onSubmit, isLoading }) {
   );
 }
 
-// ==========================================
-// ADMIN DASHBOARD COMPONENT WITH CHARTS
-// ==========================================
-function AdminPortal({ injectedStyles }) {
-  const [password, setPassword] = useState('');
-  const [authData, setAuthData] = useState(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [adminTab, setAdminTab] = useState('overview');
-
-  const handleLogin = async (e) => {
-    e.preventDefault(); 
-    setLoading(true);
-    try {
-      const res = await axios.post(`${API_BASE_URL}/api/admin/data`, { password });
-      setAuthData(res.data); 
-      setError('');
-    } catch(err) { 
-      setError('Invalid Password or Rate Limited'); 
-    }
-    finally { 
-      setLoading(false); 
-    }
-  };
-
-  const timeAgo = (date) => {
-    if (!date) return "Never";
-    const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-    if (seconds < 60) return "Just now";
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hr${hours !== 1 ? 's' : ''} ago`;
-    const days = Math.floor(hours / 24);
-    return `${days} day${days !== 1 ? 's' : ''} ago`;
-  };
-
-  if (!authData) return (
-    <div className="admin-login">
-      <div className="admin-login-box">
-        <Lock size={48} color="var(--accent-gold)" style={{marginBottom: '1rem'}} />
-        <h2 style={{color: '#0f172a', margin: '0 0 1.5rem 0'}}>Admin Portal</h2>
-        <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column'}}>
-          <input type="password" placeholder="Admin Password" value={password} onChange={e=>setPassword(e.target.value)} />
-          <button type="submit">{loading ? 'Verifying...' : 'Login'}</button>
-        </form>
-        {error && <p style={{color: '#ef4444', fontSize: '0.9rem', marginTop: '1rem', fontWeight: 500}}>{error}</p>}
-      </div>
-    </div>
-  );
-
-  const { analytics, users, feedbacks } = authData;
-
-  // Extremely safe chart calculations to prevent NaN if arrays are empty
-  const maxDau = analytics.dau.length > 0 ? Math.max(...analytics.dau.map(d => d.count)) : 1;
-  const maxTraffic = analytics.traffic.length > 0 ? Math.max(...analytics.traffic.map(d => d.hits)) : 1;
-
-  return (
-    <>
-      <style>{injectedStyles}</style>
-      <div className="admin-dashboard-layout">
-        <aside className="admin-sidebar" style={{ padding: '1.5rem' }}>
-           <h2 style={{ color: 'var(--accent-gold)', margin: '0 0 2rem 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-             <LayoutDashboard size={24}/> Admin
-           </h2>
-           <div className="admin-tabs">
-             <button className={`admin-tab ${adminTab === 'overview' ? 'active' : ''}`} onClick={() => setAdminTab('overview')}>
-               <Activity size={18} style={{marginRight: 10, verticalAlign:'middle'}}/> Analytics
-             </button>
-             <button className={`admin-tab ${adminTab === 'users' ? 'active' : ''}`} onClick={() => setAdminTab('users')}>
-               <Users size={18} style={{marginRight: 10, verticalAlign:'middle'}}/> Users & Feedback
-             </button>
-           </div>
-           
-           <div style={{marginTop: 'auto', paddingTop: '2rem'}}>
-             <button onClick={() => setAuthData(null)} style={{width: '100%', padding: '12px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '10px', cursor: 'pointer', fontWeight: 700}}>
-               Logout
-             </button>
-           </div>
-        </aside>
-
-        <main className="admin-main-content">
-          {adminTab === 'overview' && (
-             <div>
-                <h2 className="admin-header-title">Dashboard Overview</h2>
-                
-                <div className="admin-stats-grid">
-                   <div className="admin-stat-card">
-                     <div className="label">Total Users</div>
-                     <div className="value gold">{users.length}</div>
-                   </div>
-                   <div className="admin-stat-card">
-                     <div className="label">Active Today</div>
-                     <div className="value">{analytics.dau.slice(-1)[0]?.count || 0}</div>
-                   </div>
-                   <div className="admin-stat-card">
-                     <div className="label">API Hits Today</div>
-                     <div className="value">{analytics.traffic.slice(-1)[0]?.hits || 0}</div>
-                   </div>
-                   <div className="admin-stat-card">
-                     <div className="label">OLT Setup Completes</div>
-                     <div className="value">{analytics.oltUsersCount || users.filter(u => u.oltUsername).length}</div>
-                   </div>
-                </div>
-
-                <div className="admin-charts-container">
-                   <div className="admin-chart-box">
-                      <h3><Activity size={18}/> Daily Active Users (7 Days)</h3>
-                      <div className="css-bar-chart">
-                        {analytics.dau.length === 0 ? <p style={{color: '#64748b', alignSelf:'center'}}>No data</p> : 
-                         analytics.dau.map((d, i) => (
-                          <div className="css-bar-group" key={i}>
-                             <div className="css-bar" style={{height: `${(d.count / maxDau) * 100}%`}} data-val={d.count}></div>
-                             <div className="css-bar-label">{d.date.split('-').slice(1).join('/')}</div>
-                          </div>
-                        ))}
-                      </div>
-                   </div>
-
-                   <div className="admin-chart-box">
-                      <h3><Activity size={18}/> Server Traffic (API Hits)</h3>
-                      <div className="css-bar-chart">
-                        {analytics.traffic.length === 0 ? <p style={{color: '#64748b', alignSelf:'center'}}>No data</p> : 
-                         analytics.traffic.map((d, i) => (
-                          <div className="css-bar-group" key={i}>
-                             <div className="css-bar green" style={{height: `${(d.hits / maxTraffic) * 100}%`}} data-val={d.hits}></div>
-                             <div className="css-bar-label">{d.date.split('-').slice(1).join('/')}</div>
-                          </div>
-                        ))}
-                      </div>
-                   </div>
-                </div>
-
-                <div className="admin-charts-container">
-                  <div className="admin-chart-box">
-                     <h3><MousePointer2 size={18}/> Feature Usage</h3>
-                     <div className="interaction-list">
-                       {analytics.features.length === 0 ? <p style={{color: '#64748b'}}>No data</p> : analytics.features.map(f => (
-                         <div className="interaction-row" key={f._id}>
-                           <div className="interaction-row-name">{f._id.replace('tab_', '').toUpperCase()}</div>
-                           <div className="interaction-row-count">{f.clicks} views</div>
-                         </div>
-                       ))}
-                     </div>
-                  </div>
-                  <div className="admin-chart-box">
-                     <h3><MousePointer2 size={18}/> Top Button Interactions</h3>
-                     <div className="interaction-list">
-                       {analytics.interactions.length === 0 ? <p style={{color: '#64748b'}}>No data</p> : analytics.interactions.map(f => (
-                         <div className="interaction-row" key={f._id}>
-                           <div className="interaction-row-name">{f._id.replace(/_/g, ' ')}</div>
-                           <div className="interaction-row-count" style={{background: '#f1f5f9', color: '#0f172a'}}>{f.count} taps</div>
-                         </div>
-                       ))}
-                     </div>
-                  </div>
-                </div>
-             </div>
-          )}
-
-          {adminTab === 'users' && (
-             <div style={{display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
-                <div className="admin-chart-box" style={{flex: 1, minWidth: '320px', padding: '24px 0'}}>
-                  <h3 style={{margin: '0 24px 20px 24px'}}>User Database</h3>
-                  <div style={{display: 'flex', flexDirection: 'column', padding: '0 24px'}}>
-                     {users.map(u => {
-                        const timeAgoStr = timeAgo(u.lastActive);
-                        const isOnline = timeAgoStr === "Just now" || timeAgoStr.includes("min");
-                        
-                        return (
-                          <div key={u._id} className="active-user-card">
-                             <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} className="active-user-avatar" alt=""/>
-                             <div className="active-user-info">
-                               <div className="active-user-name">{u.name}</div>
-                               <div className="active-user-email">{u.email} &middot; Sec {u.defaultSection}</div>
-                             </div>
-                             <div className="active-user-time">
-                                <div className="active-user-time-val">{isOnline && <span className="online-indicator"></span>}{timeAgoStr}</div>
-                                <div className="active-user-time-label">Last Active</div>
-                             </div>
-                          </div>
-                        )
-                     })}
-                  </div>
-                </div>
-
-                <div className="admin-chart-box" style={{width: '100%', maxWidth: '420px', padding: '24px'}}>
-                  <h3 style={{marginTop: 0}}>Recent Feedback</h3>
-                  {feedbacks.length === 0 ? <p style={{color: '#64748b'}}>No feedback yet.</p> : feedbacks.map(f => (
-                     <div key={f._id} className="feedback-card">
-                        <div className="feedback-header">
-                          <div className="feedback-name">{f.userName}</div>
-                          <div className="feedback-time">{new Date(f.createdAt).toLocaleString()}</div>
-                        </div>
-                        <p className="feedback-msg">{f.message}</p>
-                     </div>
-                  ))}
-                </div>
-             </div>
-          )}
-        </main>
-      </div>
-    </>
-  );
-}
-
 export default App;
 
 // import React, { useState, useEffect, useRef } from 'react';
 // import axios from 'axios';
 // import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-// import { Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff, X, Sparkles } from 'lucide-react';
+// import { 
+//   Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, 
+//   RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, 
+//   Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, 
+//   Eye, EyeOff, X, Sparkles, Activity, Users, MousePointer2, LayoutDashboard 
+// } from 'lucide-react';
 // import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 // import { Analytics } from '@vercel/analytics/react';
 
@@ -1654,6 +1456,15 @@ export default App;
 //     return Promise.reject(error);
 //   }
 // );
+
+// // Analytics tracker helper
+// export const trackEvent = (eventType, eventName, metadata = {}) => {
+//   const token = localStorage.getItem('iimt_token');
+//   if (!token) return;
+//   axios.post(`${API_BASE_URL}/api/analytics`, { eventType, eventName, metadata }, {
+//     headers: { Authorization: `Bearer ${token}` }
+//   }).catch(() => {});
+// };
 
 // function App() {
 //   const [user, setUser] = useState(null);
@@ -1701,16 +1512,17 @@ export default App;
 //   const [todos, setTodos] = useState({});
 //   const [activeTodoClass, setActiveTodoClass] = useState(null);
 
+//   const [isReloading, setIsReloading] = useState(false);
+
 //   // --- ATTENDANCE STATE ---
 //   const [hasOltCreds, setHasOltCreds] = useState(false);
+//   const [showOltPopup, setShowOltPopup] = useState(false);
 //   const [attendanceData, setAttendanceData] = useState(null);
 //   const [isFetchingAttendance, setIsFetchingAttendance] = useState(false);
 //   const [attendanceError, setAttendanceError] = useState('');
 //   const [showCredsForm, setShowCredsForm] = useState(false);
 //   const [otpRequired, setOtpRequired] = useState(false);
 //   const [expandedSubject, setExpandedSubject] = useState(null);
-//   // Section the currently-shown attendanceData was actually fetched for (backend uses defaultSection,
-//   // which can drift from the timetable `section` state below if the user just browsed another section).
 //   const [attendanceFetchedSection, setAttendanceFetchedSection] = useState(null);
 //   const [fetchProgress, setFetchProgress] = useState({ step: 0, total: 8, message: '', status: 'idle' });
 //   const progressPollRef = useRef(null);
@@ -1750,7 +1562,21 @@ export default App;
 //     };
 //   }, []);
 
-//   // --- NEW: Feature Banner 5-Day Logic ---
+//   // Persistent 5-Day OLT setup popup
+//   useEffect(() => {
+//     if (user && hasOltCreds === false) {
+//       const dismissed = sessionStorage.getItem('olt_popup_dismissed');
+//       if (!dismissed) {
+//         const timer = setTimeout(() => {
+//           setShowOltPopup(true);
+//           trackEvent('view', 'olt_setup_popup');
+//         }, 2500); // 2.5 second delay before popping up
+//         return () => clearTimeout(timer);
+//       }
+//     }
+//   }, [user, hasOltCreds]);
+
+//   // Feature Banner 5-Day Logic
 //   useEffect(() => {
 //     if (!user) return;
 //     const dismissed = localStorage.getItem(BANNER_STORAGE_KEY);
@@ -1773,9 +1599,11 @@ export default App;
 //   const dismissFeatureBanner = () => {
 //     localStorage.setItem(BANNER_STORAGE_KEY, 'true');
 //     setShowFeatureBanner(false);
+//     trackEvent('action', 'dismiss_feature_banner');
 //   };
 
 //   const handleShareApp = async () => {
+//     trackEvent('button_click', 'share_app');
 //     if (navigator.share) {
 //       try {
 //         await navigator.share({
@@ -1793,6 +1621,7 @@ export default App;
 //   };
 
 //   const handleInstallClick = async () => {
+//     trackEvent('button_click', 'install_app');
 //     if (isIOS) {
 //       setShowIOSPrompt(true);
 //       return;
@@ -1852,9 +1681,6 @@ export default App;
 //     }
 //   }, [section, user]);
 
-//   // Attendance is fetched (server-side) for whichever section is saved as the user's account default.
-//   // If they change the timetable section they're browsing, any attendance already on screen no longer
-//   // reflects the section they're now looking at — clear it so we don't show stale/misleading numbers.
 //   useEffect(() => {
 //     if (isFirstSectionRender.current) {
 //       isFirstSectionRender.current = false;
@@ -1880,13 +1706,18 @@ export default App;
 //       try {
 //         const res = await axios.get(`${API_BASE_URL}/api/attendance/progress`, { headers: { Authorization: `Bearer ${token}` } });
 //         if (res.data) setFetchProgress(res.data);
-//       } catch (err) { /* polling errors are non-fatal, ignore silently */ }
+//       } catch (err) { }
 //     }, 500);
 //   };
 
 //   useEffect(() => {
 //     return () => stopProgressPolling();
 //   }, []);
+
+//   const handleTabChange = (tab) => {
+//     setActiveTab(tab);
+//     trackEvent('tab_click', `tab_${tab}`);
+//   };
 
 //   const handleUpdateTodos = async (date, sec, subject, newTodoList) => {
 //     setTodos(prev => {
@@ -1903,6 +1734,7 @@ export default App;
 //     });
 
 //     try {
+//       trackEvent('action', 'update_todo');
 //       const token = localStorage.getItem('iimt_token');
 //       await axios.post(`${API_BASE_URL}/api/todos`,
 //         { date, section: sec, subject, tasks: newTodoList },
@@ -1977,6 +1809,7 @@ export default App;
 //   };
 
 //   const handleLogout = () => {
+//     trackEvent('auth', 'logout');
 //     googleLogout();
 //     setUser(null);
 //     setTodos({});
@@ -2044,6 +1877,7 @@ export default App;
 //   };
 
 //   const fetchAttendance = async () => {
+//     trackEvent('button_click', 'fetch_attendance');
 //     setIsFetchingAttendance(true);
 //     setAttendanceError('');
 //     setOtpRequired(false);
@@ -2068,6 +1902,7 @@ export default App;
 //   };
 
 //   const verifyOtp = async (otp) => {
+//     trackEvent('button_click', 'submit_otp');
 //     setIsFetchingAttendance(true);
 //     setAttendanceError('');
 //     const sectionAtFetchTime = section;
@@ -2097,11 +1932,13 @@ export default App;
 //   };
 
 //   const handleSyncData = () => {
+//     trackEvent('button_click', 'manual_sync_timetable');
 //     setCache({});
 //     fetchTimetable(section, true, false);
 //   };
 
 //   const handleResetDate = () => {
+//     trackEvent('button_click', 'reset_date_today');
 //     setDaySwipeAnim('fade-in');
 //     setSelectedDate(getTodayIST());
 //   };
@@ -2131,6 +1968,7 @@ export default App;
 //   };
 
 //   const saveSectionSetting = () => {
+//     trackEvent('action', 'save_section_setting', { section: settingsSectionDraft });
 //     setSettingsStatus('Saved!');
 //     setSection(settingsSectionDraft);
 //     setTimeout(() => {
@@ -2166,6 +2004,7 @@ export default App;
 
 //   const goToDay = (direction) => {
 //     if (!selectedDate) return;
+//     trackEvent('action', `swipe_day_${direction}`);
 //     const delta = direction === 'next' ? 1 : -1;
 //     const newDate = shiftIsoDate(selectedDate, delta);
 
@@ -2214,10 +2053,12 @@ export default App;
 //       .swipe-tutorial-overlay { display: flex !important; }
 
 //       .admin-dashboard-layout { flex-direction: column !important; overflow: auto !important; }
-//       .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #eee; flex: none !important; max-height: 350px;}
+//       .admin-sidebar { width: 100% !important; border-right: none !important; border-bottom: 1px solid #e2e8f0; flex: none !important; max-height: 350px;}
       
 //       .feature-banner-actions { flex-direction: column; width: 100%; }
 //       .feature-banner-actions button { width: 100%; justify-content: center; }
+
+//       .mobile-refresh-fab { display: flex !important; }
 //     }
 
 //     /* --- SATISFYING LOADER ANIMATION --- */
@@ -2262,15 +2103,21 @@ export default App;
 //     .swipe-tutorial-dismiss { color: rgba(255, 255, 255, 0.55); font-size: 0.75rem; font-weight: 500; margin-top: 0.15rem; }
 
 //     /* --- FIX: FORCED TEXT VISIBILITY ON ALL INPUTS & TEXTAREAS --- */
-//     .modal-content textarea, .admin-login input, .todo-input-form input { color: #333 !important; background-color: #fff !important; }
-//     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-//     .modal-content { background: white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; color: #333; }
+//     .modal-content textarea, .todo-input-form input { color: #333 !important; background-color: #fff !important; }
+//     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+//     .modal-content { background: white; padding: 2rem; border-radius: 16px; width: 90%; max-width: 400px; display: flex; flex-direction: column; gap: 1rem; color: #333; box-shadow: 0 10px 40px rgba(0,0,0,0.2); animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+//     @keyframes popIn { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
 //     .modal-content textarea { width: 100%; height: 100px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: inherit; resize: none; }
 //     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 //     .btn-submit { background: var(--accent-gold); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
 //     .btn-submit:disabled { background: #d0b875; cursor: not-allowed; }
 //     .btn-cancel { background: #eee; color: #333; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
 //     .btn-cancel:disabled { background: #f5f5f5; color: #999; cursor: not-allowed; }
+//     .btn-text { background: none; border: none; color: #888; font-weight: 500; cursor: pointer; padding: 8px; width: 100%; text-decoration: underline; }
+
+//     /* --- OLT POPUP GLOW --- */
+//     .olt-glow-modal { background: linear-gradient(to bottom, #fff, #fefdf9); border: 1px solid var(--accent-gold); box-shadow: 0 0 20px rgba(219, 163, 21, 0.2); text-align: center; }
+//     .olt-glow-modal h3 { color: var(--accent-gold); font-size: 1.4rem; margin: 0;}
 
 //     /* --- SETTINGS MODAL --- */
 //     .settings-section-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -2342,27 +2189,75 @@ export default App;
 //     .todo-summary-item.completed { opacity: 0.5; text-decoration: line-through; }
 //     .todo-summary-text { flex: 1; word-break: break-word; line-height: 1.4; margin-top: -1px; }
 
-//     /* --- ADMIN PORTAL DASHBOARD LAYOUT --- */
-//     .admin-container-fluid { font-family: sans-serif; color: #333; height: 100vh; background: #f5f5f5;}
-//     .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #fff;}
-//     .admin-login input { padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc; }
-//     .admin-login button { background: var(--accent-gold); color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }
-//     .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; }
-//     .admin-sidebar { width: 300px; background: white; border-right: 1px solid #eee; display: flex; flex-direction: column; }
-//     .admin-sidebar-header { padding: 1.5rem; border-bottom: 1px solid #eee; }
-//     .admin-sidebar-content { flex: 1; overflow-y: auto; padding: 1rem; }
-//     .admin-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fafafa;}
-//     .admin-main-header { padding: 1.5rem; border-bottom: 1px solid #eee; background: white; display: flex; justify-content: space-between; align-items: center;}
-//     .admin-main-content { flex: 1; overflow-y: auto; padding: 1.5rem; }
-//     .active-user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 8px; transition: background 0.2s;}
-//     .active-user-card:hover { background: #f9f9f9; }
-//     .active-user-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+//     /* --- MOBILE REFRESH FAB --- */
+//     .mobile-refresh-fab { display: none; position: fixed; bottom: 85px; right: 20px; z-index: 900; background: white; color: var(--accent-gold); width: 50px; height: 50px; border-radius: 50%; border: 1px solid rgba(219,163,21,0.3); align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.15); cursor: pointer; }
+//     .spinning { animation: spin 1s linear infinite; }
+//     @keyframes spin { 100% { transform: rotate(360deg); } }
+
+//     /* --- ADMIN PORTAL DASHBOARD LAYOUT & CHARTS (REVAMPED) --- */
+//     .admin-container-fluid { font-family: 'Inter', system-ui, sans-serif; color: #0f172a; height: 100vh; background: #f8fafc; }
+//     .admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #f8fafc; }
+//     .admin-login-box { background: white; padding: 3rem; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); text-align: center; width: 90%; max-width: 400px; }
+//     .admin-login input { padding: 12px; margin-bottom: 12px; border-radius: 8px; border: 1px solid #cbd5e1; width: 100%; color: #0f172a; background: #fff; box-sizing: border-box; }
+//     .admin-login button { background: var(--accent-gold); color: white; padding: 12px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; transition: opacity 0.2s; }
+//     .admin-login button:hover { opacity: 0.9; }
+    
+//     .admin-dashboard-layout { display: flex; height: 100vh; overflow: hidden; background: #f8fafc; }
+//     .admin-sidebar { width: 280px; background: #ffffff; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column; box-shadow: 2px 0 10px rgba(0,0,0,0.02); z-index: 10; }
+    
+//     .admin-tabs { display: flex; flex-direction: column; gap: 8px; margin-top: 1.5rem; }
+//     .admin-tab { background: transparent; border: none; padding: 14px 20px; font-size: 0.95rem; font-weight: 600; color: #64748b; cursor: pointer; border-radius: 10px; transition: all 0.2s ease; text-align: left; display: flex; align-items: center; }
+//     .admin-tab.active { background: rgba(219,163,21,0.1); color: var(--accent-gold); }
+//     .admin-tab:hover:not(.active) { background: #f1f5f9; color: #0f172a; }
+
+//     .admin-main-content { flex: 1; overflow-y: auto; padding: 2.5rem; }
+//     .admin-header-title { font-size: 1.75rem; font-weight: 700; color: #0f172a; margin: 0 0 1.5rem 0; }
+    
+//     /* Stats grid */
+//     .admin-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px; }
+//     .admin-stat-card { background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+//     .admin-stat-card .label { font-size: 0.85rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+//     .admin-stat-card .value { font-size: 2.2rem; font-weight: 800; color: #0f172a; }
+//     .admin-stat-card .value.gold { color: var(--accent-gold); }
+
+//     /* CSS Charts */
+//     .admin-charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 24px; margin-bottom: 30px; }
+//     @media (max-width: 768px) { .admin-charts-container { grid-template-columns: 1fr; } }
+//     .admin-chart-box { background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+//     .admin-chart-box h3 { margin: 0 0 20px 0; font-size: 1.1rem; color: #0f172a; display: flex; align-items: center; gap: 10px; font-weight: 700; }
+    
+//     .css-bar-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 220px; padding-top: 30px; border-bottom: 2px solid #f1f5f9; }
+//     .css-bar-group { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 10px; width: 12%; height: 100%; }
+//     .css-bar { width: 100%; background: var(--accent-gold); border-radius: 6px 6px 0 0; position: relative; min-height: 4px; transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+//     .css-bar.green { background: #10b981; }
+//     .css-bar:hover::after { content: attr(data-val); position: absolute; top: -32px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; z-index: 10; }
+//     .css-bar-label { font-size: 0.75rem; color: #64748b; font-weight: 500; text-align: center; }
+
+//     /* Lists */
+//     .interaction-list { display: flex; flex-direction: column; gap: 12px; }
+//     .interaction-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; transition: background 0.2s; }
+//     .interaction-row:hover { background: #f1f5f9; }
+//     .interaction-row-name { font-weight: 600; font-size: 0.95rem; color: #334155; display: flex; align-items: center; gap: 8px;}
+//     .interaction-row-count { background: #ffffff; color: var(--accent-gold); padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 0.85rem; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.02);}
+
+//     /* User Database Cards */
+//     .active-user-card { display: flex; align-items: center; gap: 15px; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; background: #ffffff; margin-bottom: 12px; transition: all 0.2s ease;}
+//     .active-user-card:hover { border-color: #cbd5e1; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); transform: translateY(-1px); }
+//     .active-user-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #f1f5f9; }
 //     .active-user-info { flex: 1; overflow: hidden; }
-//     .active-user-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-//     .active-user-time { font-size: 0.75rem; color: #666; }
-//     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
-//     .status-dot.online { background: #4caf50; box-shadow: 0 0 5px rgba(76, 175, 80, 0.4); }
-//     .feedback-card { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid var(--accent-gold); color: #333; box-shadow: 0 2px 8px rgba(0,0,0,0.05);}
+//     .active-user-name { font-weight: 700; font-size: 1rem; color: #0f172a; margin-bottom: 4px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+//     .active-user-email { font-size: 0.85rem; color: #64748b; display: flex; align-items: center; gap: 6px; }
+//     .active-user-time { text-align: right; }
+//     .active-user-time-val { font-size: 0.9rem; font-weight: 600; color: #334155; }
+//     .active-user-time-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+//     .online-indicator { display: inline-block; width: 8px; height: 8px; background: #10b981; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 0 2px #d1fae5; }
+    
+//     /* Feedback Cards */
+//     .feedback-card { background: #fefce8; padding: 20px; margin-bottom: 16px; border-radius: 12px; border: 1px solid #fef08a; border-left: 5px solid var(--accent-gold); color: #0f172a; box-shadow: 0 2px 4px rgba(0,0,0,0.02);}
+//     .feedback-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+//     .feedback-name { font-weight: 700; font-size: 1rem; color: #0f172a; }
+//     .feedback-time { font-size: 0.8rem; color: #854d0e; font-weight: 500; }
+//     .feedback-msg { margin: 0; font-size: 0.95rem; color: #334155; white-space: pre-wrap; line-height: 1.5; }
 
 //     /* --- ATTENDANCE UI --- */
 //     .attendance-container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.2rem; }
@@ -2436,7 +2331,7 @@ export default App;
 
 //   const renderAttendanceTab = () => {
 //     if (!hasOltCreds || showCredsForm) {
-//       return <CredentialForm onSubmit={saveCredentials} onCancel={() => setShowCredsForm(false)} hasCreds={hasOltCreds} />;
+//       return <CredentialForm onSubmit={saveCredentials} onCancel={() => {setShowCredsForm(false); trackEvent('action', 'cancel_creds_form');}} hasCreds={hasOltCreds} />;
 //     }
 
 //     if (otpRequired) {
@@ -2450,7 +2345,7 @@ export default App;
 //           <h3>View Your Attendance</h3>
 //           <p>Sync your live attendance directly from the OLT portal.</p>
 //           <button className="btn-submit" onClick={fetchAttendance} style={{ marginTop: '1rem' }}>Fetch Now</button>
-//           <button className="btn-cancel" onClick={() => setShowCredsForm(true)} style={{ marginTop: '1rem', marginLeft: '10px' }}>Update Credentials</button>
+//           <button className="btn-cancel" onClick={() => {setShowCredsForm(true); trackEvent('button_click', 'update_creds');}} style={{ marginTop: '1rem', marginLeft: '10px' }}>Update Credentials</button>
 //         </div>
 //       );
 //     }
@@ -2506,7 +2401,7 @@ export default App;
 //             )}
 //             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
 //               {sectionMismatch && (
-//                 <button className="btn-submit" onClick={() => { setSettingsSectionDraft(attendanceFetchedSection); setShowSettingsModal(true); }}>
+//                 <button className="btn-submit" onClick={() => { setSettingsSectionDraft(attendanceFetchedSection); setShowSettingsModal(true); trackEvent('action', 'fix_section_mismatch'); }}>
 //                   Switch back to Section {attendanceFetchedSection}
 //                 </button>
 //               )}
@@ -2553,7 +2448,7 @@ export default App;
             
 //             return (
 //               <div key={idx} className="subject-card">
-//                 <div className="subject-header" onClick={() => setExpandedSubject(isExp ? null : subject)}>
+//                 <div className="subject-header" onClick={() => {setExpandedSubject(isExp ? null : subject); trackEvent('action', isExp ? 'collapse_attendance' : 'expand_attendance');}}>
 //                   <div className="subject-title">{subject}</div>
 //                   <div className="subject-stats">
 //                     <span style={{ fontWeight: 'bold', color: '#444' }}>{data.attended}/{data.total}</span>
@@ -2585,6 +2480,37 @@ export default App;
 //   return (
 //     <>
 //       <style>{injectedStyles}</style>
+
+//       {/* --- LIVE ATTENDANCE POPUP FOR NEW USERS --- */}
+//       {showOltPopup && (
+//         <div className="modal-overlay">
+//           <div className="modal-content olt-glow-modal">
+//             <ClipboardCheck size={48} color="var(--accent-gold)" style={{ margin: '0 auto' }} />
+//             <h3>Unlock Live Attendance</h3>
+//             <p style={{ fontSize: '0.95rem', color: '#666', margin: '0 0 10px 0', lineHeight: '1.4' }}>
+//               You can now track your live class attendance and view detailed class-by-class status directly inside the app!
+//             </p>
+//             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+//               <button className="btn-submit" onClick={() => { setShowOltPopup(false); handleTabChange('attendance'); }}>Setup OLT Account Now</button>
+//               <button className="btn-text" onClick={() => { setShowOltPopup(false); sessionStorage.setItem('olt_popup_dismissed', '1'); trackEvent('action', 'dismiss_olt_popup'); }}>Remind me later</button>
+//             </div>
+//           </div>
+//         </div>
+//       )}
+
+//       {/* --- MOBILE FLOATING REFRESH BUTTON --- */}
+//       {activeTab === 'timetable' && (
+//         <button 
+//           className="mobile-refresh-fab" 
+//           onClick={() => { 
+//             setIsReloading(true); 
+//             trackEvent('button_click', 'mobile_fab_reload'); 
+//             setTimeout(() => window.location.reload(), 150); 
+//           }}
+//         >
+//           <RefreshCw size={22} className={isReloading ? 'spinning' : ''} />
+//         </button>
+//       )}
 
 //       {showIOSPrompt && (
 //         <div className="modal-overlay" onClick={() => setShowIOSPrompt(false)}>
@@ -2669,9 +2595,9 @@ export default App;
 //           </div>
 
 //           <div className="nav-menu">
-//             <button className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`} onClick={() => setActiveTab('timetable')}><Calendar size={18} /> Timetable</button>
-//             <button className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => setActiveTab('summary')}><Table2 size={18} /> Summary Table</button>
-//             <button className={`nav-btn ${activeTab === 'attendance' ? 'active' : ''}`} onClick={() => setActiveTab('attendance')}><ClipboardCheck size={18} /> Attendance</button>
+//             <button className={`nav-btn ${activeTab === 'timetable' ? 'active' : ''}`} onClick={() => handleTabChange('timetable')}><Calendar size={18} /> Timetable</button>
+//             <button className={`nav-btn ${activeTab === 'summary' ? 'active' : ''}`} onClick={() => handleTabChange('summary')}><Table2 size={18} /> Summary Table</button>
+//             <button className={`nav-btn ${activeTab === 'attendance' ? 'active' : ''}`} onClick={() => handleTabChange('attendance')}><ClipboardCheck size={18} /> Attendance {(!hasOltCreds && !sessionStorage.getItem('olt_popup_dismissed')) && <span style={{width: 8, height: 8, background: 'red', borderRadius: '50%', marginLeft: '5px'}}></span>}</button>
 //           </div>
 
 //           {activeTab !== 'attendance' && (
@@ -2679,7 +2605,7 @@ export default App;
 //               <span className="section-label">Select Section</span>
 //               <div className="sec-grid">
 //                 {SECTIONS.map((sec) => (
-//                   <button key={sec} className={`section-btn ${section === sec ? 'active' : ''}`} onClick={() => setSection(sec)}>{sec}</button>
+//                   <button key={sec} className={`section-btn ${section === sec ? 'active' : ''}`} onClick={() => { setSection(sec); trackEvent('action', 'change_section', { to: sec }); }}>{sec}</button>
 //                 ))}
 //               </div>
 //             </div>
@@ -2691,9 +2617,9 @@ export default App;
 //                   <Download size={18} /> Install App
 //                 </button>
 //               )}
-//               <button onClick={() => { setSettingsSectionDraft(section); setShowSettingsModal(true); }} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><Settings size={18} /> Settings</button>
-//               <button onClick={() => setShowFeedbackModal(true)} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><MessageSquare size={18} /> Provide Feedback</button>
-//               {activeTab === 'timetable' && <button onClick={handleSyncData} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>}
+//               <button onClick={() => { setSettingsSectionDraft(section); setShowSettingsModal(true); trackEvent('button_click', 'open_settings'); }} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><Settings size={18} /> Settings</button>
+//               <button onClick={() => { setShowFeedbackModal(true); trackEvent('button_click', 'open_feedback'); }} className="nav-btn" style={{ width: '100%', color: 'var(--text-secondary)' }}><MessageSquare size={18} /> Provide Feedback</button>
+//               {activeTab === 'timetable' && <button onClick={handleSyncData} className="nav-btn desktop-only" style={{ width: '100%', color: 'var(--text-secondary)' }} disabled={loading}><RefreshCw size={18} /> {loading ? 'Syncing...' : 'Sync Data'}</button>}
 //               <button onClick={handleLogout} className="nav-btn" style={{ width: '100%', color: 'var(--color-cancelled)' }}><LogOut size={18} /> Sign Out</button>
 //           </div>
 //         </aside>
@@ -2726,13 +2652,13 @@ export default App;
 //                     You can now track your live class attendance and view detailed class-by-class status directly from the OLT portal!
 //                   </p>
 //                   <div className="feature-banner-actions">
-//                     <button className="btn-banner-primary" onClick={() => setActiveTab('attendance')}>
+//                     <button className="btn-banner-primary" onClick={() => handleTabChange('attendance')}>
 //                       <ClipboardCheck size={16} /> Check it out
 //                     </button>
 //                     <button className="btn-banner-secondary" onClick={handleShareApp}>
 //                       <Share size={16} /> Share App
 //                     </button>
-//                     <button className="btn-banner-secondary" onClick={() => setShowFeedbackModal(true)}>
+//                     <button className="btn-banner-secondary" onClick={() => {setShowFeedbackModal(true); trackEvent('button_click', 'banner_feedback');}}>
 //                       <MessageSquare size={16} /> Give Feedback
 //                     </button>
 //                   </div>
@@ -2762,7 +2688,7 @@ export default App;
 //                     </div>
 //                     <div className="date-picker-group">
 //                       <button onClick={handleResetDate} className="nav-btn" style={{ padding: '0.6rem', border: '1px solid var(--border-color)', margin: '0' }} title="Snap back to Today"><CalendarSync size={18} color="var(--accent-gold)" /></button>
-//                       <input type="date" className="date-input" value={selectedDate} min={minDate} max={maxDate} onChange={(e) => { setDaySwipeAnim('fade-in'); setSelectedDate(e.target.value); }} disabled={!minDate} />
+//                       <input type="date" className="date-input" value={selectedDate} min={minDate} max={maxDate} onChange={(e) => { setDaySwipeAnim('fade-in'); setSelectedDate(e.target.value); trackEvent('action', 'pick_date'); }} disabled={!minDate} />
 //                     </div>
 //                   </div>
 
@@ -2794,7 +2720,7 @@ export default App;
 //                                   <span>{cls.time}</span>
 //                                 </div>
 
-//                                 <button className="add-task-btn" onClick={() => setActiveTodoClass({ subject: cls.subject, date: selectedDate, section })}>
+//                                 <button className="add-task-btn" onClick={() => { setActiveTodoClass({ subject: cls.subject, date: selectedDate, section }); trackEvent('button_click', 'open_todo_modal'); }}>
 //                                   <ListTodo size={16} />
 //                                   {hasTodos && <span className="task-indicator" />}
 //                                 </button>
@@ -2859,7 +2785,7 @@ export default App;
 //   const [showPass, setShowPass] = useState(false);
 
 //   return (
-//     <div className="creds-card" style={{ maxWidth: '400px', margin: '4rem auto' }}>
+//     <div className="creds-card">
 //       <Lock size={40} color="var(--accent-gold)" style={{ marginBottom: '1rem' }} />
 //       <h3>{hasCreds ? 'Update' : 'Link'} OLT Account</h3>
 //       <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Your credentials are encrypted and stored securely to sync your attendance.</p>
@@ -2887,7 +2813,7 @@ export default App;
 // function OTPForm({ onSubmit, isLoading }) {
 //   const [otp, setOtp] = useState('');
 //   return (
-//     <div className="creds-card" style={{ maxWidth: '400px', margin: '4rem auto' }}>
+//     <div className="creds-card">
 //       <AlertCircle size={40} color="var(--accent-gold)" style={{ marginBottom: '1rem' }} />
 //       <h3>Two-Factor Authentication</h3>
 //       <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Open your Google Authenticator app and enter the 6-digit code for OLT.</p>
@@ -2903,97 +2829,207 @@ export default App;
 //   );
 // }
 
+// // ==========================================
+// // ADMIN DASHBOARD COMPONENT WITH CHARTS
+// // ==========================================
 // function AdminPortal({ injectedStyles }) {
 //   const [password, setPassword] = useState('');
-//   const [authenticated, setAuthenticated] = useState(false);
-//   const [feedbacks, setFeedbacks] = useState([]);
-//   const [users, setUsers] = useState([]);
+//   const [authData, setAuthData] = useState(null);
 //   const [error, setError] = useState('');
-//   const [isLoading, setIsLoading] = useState(false);
+//   const [loading, setLoading] = useState(false);
+//   const [adminTab, setAdminTab] = useState('overview');
 
 //   const handleLogin = async (e) => {
-//     e.preventDefault();
-//     setIsLoading(true);
+//     e.preventDefault(); 
+//     setLoading(true);
 //     try {
 //       const res = await axios.post(`${API_BASE_URL}/api/admin/data`, { password });
-//       setFeedbacks(res.data.feedbacks);
-//       setUsers(res.data.users);
-//       setAuthenticated(true);
+//       setAuthData(res.data); 
 //       setError('');
-//     } catch (err) {
-//       if (err.response?.status === 429) setError('Rate limit exceeded. Please wait before trying again.');
-//       else setError('Invalid Password');
-//     } finally { setIsLoading(false); }
+//     } catch(err) { 
+//       setError('Invalid Password or Rate Limited'); 
+//     }
+//     finally { 
+//       setLoading(false); 
+//     }
 //   };
 
 //   const timeAgo = (date) => {
-//     if (!date) return "Never logged in";
+//     if (!date) return "Never";
 //     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-//     let interval = seconds / 86400;
-//     if (interval > 1) return Math.floor(interval) + "d ago";
-//     interval = seconds / 3600;
-//     if (interval > 1) return Math.floor(interval) + "h ago";
-//     interval = seconds / 60;
-//     if (interval > 5) return Math.floor(interval) + "m ago";
-//     return "Online Now";
+//     if (seconds < 60) return "Just now";
+//     const minutes = Math.floor(seconds / 60);
+//     if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
+//     const hours = Math.floor(minutes / 60);
+//     if (hours < 24) return `${hours} hr${hours !== 1 ? 's' : ''} ago`;
+//     const days = Math.floor(hours / 24);
+//     return `${days} day${days !== 1 ? 's' : ''} ago`;
 //   };
+
+//   if (!authData) return (
+//     <div className="admin-login">
+//       <div className="admin-login-box">
+//         <Lock size={48} color="var(--accent-gold)" style={{marginBottom: '1rem'}} />
+//         <h2 style={{color: '#0f172a', margin: '0 0 1.5rem 0'}}>Admin Portal</h2>
+//         <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column'}}>
+//           <input type="password" placeholder="Admin Password" value={password} onChange={e=>setPassword(e.target.value)} />
+//           <button type="submit">{loading ? 'Verifying...' : 'Login'}</button>
+//         </form>
+//         {error && <p style={{color: '#ef4444', fontSize: '0.9rem', marginTop: '1rem', fontWeight: 500}}>{error}</p>}
+//       </div>
+//     </div>
+//   );
+
+//   const { analytics, users, feedbacks } = authData;
+
+//   // Extremely safe chart calculations to prevent NaN if arrays are empty
+//   const maxDau = analytics.dau.length > 0 ? Math.max(...analytics.dau.map(d => d.count)) : 1;
+//   const maxTraffic = analytics.traffic.length > 0 ? Math.max(...analytics.traffic.map(d => d.hits)) : 1;
 
 //   return (
 //     <>
 //       <style>{injectedStyles}</style>
-//       <div className="admin-container-fluid">
-//         {!authenticated ? (
-//           <div className="admin-login">
-//             <Lock size={48} color="var(--accent-gold)" style={{marginBottom: '1rem'}} />
-//             <h2>Admin Portal</h2>
-//             <form onSubmit={handleLogin} style={{display: 'flex', flexDirection: 'column', width: '300px', marginTop: '1rem'}}>
-//               <input type="password" placeholder="Admin Password" value={password} onChange={e => setPassword(e.target.value)} disabled={isLoading} />
-//               <button type="submit" disabled={isLoading}>{isLoading ? 'Loading...' : 'View Dashboard'}</button>
-//             </form>
-//             {error && <p style={{color: 'red'}}>{error}</p>}
-//           </div>
-//         ) : (
-//           <div className="admin-dashboard-layout">
-//             <aside className="admin-sidebar">
-//               <div className="admin-sidebar-header">
-//                 <h3 style={{margin: 0}}>Active Users</h3>
-//                 <p style={{margin: 0, fontSize: '0.8rem', color: '#666'}}>Total Accounts: {users.length}</p>
-//               </div>
-//               <div className="admin-sidebar-content">
-//                 {users.map(u => {
-//                   const isOnline = timeAgo(u.lastActive) === "Online Now";
-//                   return (
-//                     <div key={u._id} className="active-user-card">
-//                       <img src={u.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=dba315&color=fff`} className="active-user-avatar" alt="Avatar"/>
-//                       <div className="active-user-info">
-//                         <div className="active-user-name" title={u.name}>{u.name}</div>
-//                         <div className="active-user-time">{timeAgo(u.lastActive)} {u.defaultSection ? `· Sec ${u.defaultSection}` : ''}</div>
+//       <div className="admin-dashboard-layout">
+//         <aside className="admin-sidebar" style={{ padding: '1.5rem' }}>
+//            <h2 style={{ color: 'var(--accent-gold)', margin: '0 0 2rem 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+//              <LayoutDashboard size={24}/> Admin
+//            </h2>
+//            <div className="admin-tabs">
+//              <button className={`admin-tab ${adminTab === 'overview' ? 'active' : ''}`} onClick={() => setAdminTab('overview')}>
+//                <Activity size={18} style={{marginRight: 10, verticalAlign:'middle'}}/> Analytics
+//              </button>
+//              <button className={`admin-tab ${adminTab === 'users' ? 'active' : ''}`} onClick={() => setAdminTab('users')}>
+//                <Users size={18} style={{marginRight: 10, verticalAlign:'middle'}}/> Users & Feedback
+//              </button>
+//            </div>
+           
+//            <div style={{marginTop: 'auto', paddingTop: '2rem'}}>
+//              <button onClick={() => setAuthData(null)} style={{width: '100%', padding: '12px', border: 'none', background: '#fee2e2', color: '#b91c1c', borderRadius: '10px', cursor: 'pointer', fontWeight: 700}}>
+//                Logout
+//              </button>
+//            </div>
+//         </aside>
+
+//         <main className="admin-main-content">
+//           {adminTab === 'overview' && (
+//              <div>
+//                 <h2 className="admin-header-title">Dashboard Overview</h2>
+                
+//                 <div className="admin-stats-grid">
+//                    <div className="admin-stat-card">
+//                      <div className="label">Total Users</div>
+//                      <div className="value gold">{users.length}</div>
+//                    </div>
+//                    <div className="admin-stat-card">
+//                      <div className="label">Active Today</div>
+//                      <div className="value">{analytics.dau.slice(-1)[0]?.count || 0}</div>
+//                    </div>
+//                    <div className="admin-stat-card">
+//                      <div className="label">API Hits Today</div>
+//                      <div className="value">{analytics.traffic.slice(-1)[0]?.hits || 0}</div>
+//                    </div>
+//                    <div className="admin-stat-card">
+//                      <div className="label">OLT Setup Completes</div>
+//                      <div className="value">{analytics.oltUsersCount || users.filter(u => u.oltUsername).length}</div>
+//                    </div>
+//                 </div>
+
+//                 <div className="admin-charts-container">
+//                    <div className="admin-chart-box">
+//                       <h3><Activity size={18}/> Daily Active Users (7 Days)</h3>
+//                       <div className="css-bar-chart">
+//                         {analytics.dau.length === 0 ? <p style={{color: '#64748b', alignSelf:'center'}}>No data</p> : 
+//                          analytics.dau.map((d, i) => (
+//                           <div className="css-bar-group" key={i}>
+//                              <div className="css-bar" style={{height: `${(d.count / maxDau) * 100}%`}} data-val={d.count}></div>
+//                              <div className="css-bar-label">{d.date.split('-').slice(1).join('/')}</div>
+//                           </div>
+//                         ))}
 //                       </div>
-//                       <div className={`status-dot ${isOnline ? 'online' : ''}`}></div>
-//                     </div>
-//                   )
-//                 })}
-//               </div>
-//             </aside>
-//             <main className="admin-main">
-//               <div className="admin-main-header">
-//                 <h2 style={{margin: 0}}>User Feedback</h2>
-//                 <button className="nav-btn" onClick={() => { setAuthenticated(false); setPassword(''); setFeedbacks([]); setUsers([]); }}>Log Out</button>
-//               </div>
-//               <div className="admin-main-content">
-//                 {feedbacks.length === 0 ? <p>No feedback available yet.</p> : null}
-//                 {feedbacks.map((f, i) => (
-//                   <div className="feedback-card" key={i}>
-//                     <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px'}}>
-//                       <strong>{f.userName} ({f.userEmail})</strong><span style={{fontSize: '0.8rem', color: '#666'}}>{new Date(f.createdAt).toLocaleString()}</span>
-//                     </div>
-//                     <p style={{margin: 0, whiteSpace: 'pre-wrap'}}>{f.message}</p>
+//                    </div>
+
+//                    <div className="admin-chart-box">
+//                       <h3><Activity size={18}/> Server Traffic (API Hits)</h3>
+//                       <div className="css-bar-chart">
+//                         {analytics.traffic.length === 0 ? <p style={{color: '#64748b', alignSelf:'center'}}>No data</p> : 
+//                          analytics.traffic.map((d, i) => (
+//                           <div className="css-bar-group" key={i}>
+//                              <div className="css-bar green" style={{height: `${(d.hits / maxTraffic) * 100}%`}} data-val={d.hits}></div>
+//                              <div className="css-bar-label">{d.date.split('-').slice(1).join('/')}</div>
+//                           </div>
+//                         ))}
+//                       </div>
+//                    </div>
+//                 </div>
+
+//                 <div className="admin-charts-container">
+//                   <div className="admin-chart-box">
+//                      <h3><MousePointer2 size={18}/> Feature Usage</h3>
+//                      <div className="interaction-list">
+//                        {analytics.features.length === 0 ? <p style={{color: '#64748b'}}>No data</p> : analytics.features.map(f => (
+//                          <div className="interaction-row" key={f._id}>
+//                            <div className="interaction-row-name">{f._id.replace('tab_', '').toUpperCase()}</div>
+//                            <div className="interaction-row-count">{f.clicks} views</div>
+//                          </div>
+//                        ))}
+//                      </div>
 //                   </div>
-//                 ))}
-//               </div>
-//             </main>
-//           </div>
-//         )}
+//                   <div className="admin-chart-box">
+//                      <h3><MousePointer2 size={18}/> Top Button Interactions</h3>
+//                      <div className="interaction-list">
+//                        {analytics.interactions.length === 0 ? <p style={{color: '#64748b'}}>No data</p> : analytics.interactions.map(f => (
+//                          <div className="interaction-row" key={f._id}>
+//                            <div className="interaction-row-name">{f._id.replace(/_/g, ' ')}</div>
+//                            <div className="interaction-row-count" style={{background: '#f1f5f9', color: '#0f172a'}}>{f.count} taps</div>
+//                          </div>
+//                        ))}
+//                      </div>
+//                   </div>
+//                 </div>
+//              </div>
+//           )}
+
+//           {adminTab === 'users' && (
+//              <div style={{display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
+//                 <div className="admin-chart-box" style={{flex: 1, minWidth: '320px', padding: '24px 0'}}>
+//                   <h3 style={{margin: '0 24px 20px 24px'}}>User Database</h3>
+//                   <div style={{display: 'flex', flexDirection: 'column', padding: '0 24px'}}>
+//                      {users.map(u => {
+//                         const timeAgoStr = timeAgo(u.lastActive);
+//                         const isOnline = timeAgoStr === "Just now" || timeAgoStr.includes("min");
+                        
+//                         return (
+//                           <div key={u._id} className="active-user-card">
+//                              <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} className="active-user-avatar" alt=""/>
+//                              <div className="active-user-info">
+//                                <div className="active-user-name">{u.name}</div>
+//                                <div className="active-user-email">{u.email} &middot; Sec {u.defaultSection}</div>
+//                              </div>
+//                              <div className="active-user-time">
+//                                 <div className="active-user-time-val">{isOnline && <span className="online-indicator"></span>}{timeAgoStr}</div>
+//                                 <div className="active-user-time-label">Last Active</div>
+//                              </div>
+//                           </div>
+//                         )
+//                      })}
+//                   </div>
+//                 </div>
+
+//                 <div className="admin-chart-box" style={{width: '100%', maxWidth: '420px', padding: '24px'}}>
+//                   <h3 style={{marginTop: 0}}>Recent Feedback</h3>
+//                   {feedbacks.length === 0 ? <p style={{color: '#64748b'}}>No feedback yet.</p> : feedbacks.map(f => (
+//                      <div key={f._id} className="feedback-card">
+//                         <div className="feedback-header">
+//                           <div className="feedback-name">{f.userName}</div>
+//                           <div className="feedback-time">{new Date(f.createdAt).toLocaleString()}</div>
+//                         </div>
+//                         <p className="feedback-msg">{f.message}</p>
+//                      </div>
+//                   ))}
+//                 </div>
+//              </div>
+//           )}
+//         </main>
 //       </div>
 //     </>
 //   );
