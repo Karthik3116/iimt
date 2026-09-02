@@ -109,8 +109,8 @@ const TrafficLog = mongoose.model('TrafficLog', trafficLogSchema);
 
 const analyticsEventSchema = new mongoose.Schema({
     userEmail: String,
-    eventType: String, // e.g., 'click', 'view', 'action'
-    eventName: String, // e.g., 'tab_attendance', 'btn_sync'
+    eventType: String, // e.g., 'click', 'view', 'action', 'auth'
+    eventName: String, // e.g., 'tab_attendance', 'btn_sync', 'login'
     metadata: mongoose.Schema.Types.Mixed,
     timestamp: { type: Date, default: Date.now, expires: '90d' } // Auto-delete after 90 days
 });
@@ -201,7 +201,7 @@ app.post('/api/auth/google', strictLimiter, async (req, res) => {
         } else {
             user.lastActive = new Date();
             await user.save();
-            AnalyticsEvent.create({ userEmail: email, eventType: 'auth', eventName: 'login' }).catch(()=>{});
+            AnalyticsEvent.create({ userEmail: email, eventType: 'auth', eventName: 'app_opened' }).catch(()=>{});
         }
 
         const sessionToken = jwt.sign(
@@ -362,6 +362,47 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
         res.status(500).json({ error: "Server error fetching admin data." });
     }
 });
+
+// --- NEW: USER SPECIFIC ANALYTICS ENDPOINT ---
+app.post('/api/admin/user-details', strictLimiter, async (req, res) => {
+    const { password, email } = req.body;
+    if (password !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: "Unauthorized. Incorrect password." });
+    }
+    
+    try {
+        const user = await User.findOne({ email }).select('-__v -oltPassword');
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // Generate 7-day activity graph specifically for this user
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        
+        const activityRaw = await AnalyticsEvent.aggregate([
+            { $match: { userEmail: email, timestamp: { $gte: sevenDaysAgo } } },
+            { $group: { 
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp", timezone: "Asia/Kolkata" } }, 
+                count: { $sum: 1 } 
+            }},
+            { $sort: { _id: 1 } }
+        ]);
+
+        // Fetch last 150 events to construct timeline session history
+        const recentEventsRaw = await AnalyticsEvent.find({ userEmail: email })
+            .sort({ timestamp: -1 })
+            .limit(150);
+
+        res.json({ 
+            success: true, 
+            user, 
+            activityRaw, 
+            recentEventsRaw 
+        });
+    } catch (error) {
+        console.error("User Details Error:", error);
+        res.status(500).json({ error: "Server error fetching user details." });
+    }
+});
+
 
 app.get('/api/todos', authenticateUser, async (req, res) => {
     try {
@@ -1276,6 +1317,23 @@ app.listen(PORT, () => {
 // todoSchema.index({ userEmail: 1, date: 1, section: 1, subject: 1 }, { unique: true });
 // const Todo = mongoose.model('Todo', todoSchema);
 
+// // --- NEW: ANALYTICS & TRAFFIC SCHEMAS ---
+// const trafficLogSchema = new mongoose.Schema({
+//     endpoint: String,
+//     method: String,
+//     timestamp: { type: Date, default: Date.now, expires: '30d' } // Auto-delete after 30 days
+// });
+// const TrafficLog = mongoose.model('TrafficLog', trafficLogSchema);
+
+// const analyticsEventSchema = new mongoose.Schema({
+//     userEmail: String,
+//     eventType: String, // e.g., 'click', 'view', 'action'
+//     eventName: String, // e.g., 'tab_attendance', 'btn_sync'
+//     metadata: mongoose.Schema.Types.Mixed,
+//     timestamp: { type: Date, default: Date.now, expires: '90d' } // Auto-delete after 90 days
+// });
+// const AnalyticsEvent = mongoose.model('AnalyticsEvent', analyticsEventSchema);
+
 // // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
 // const ENCRYPTION_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'iimtrichy_fallback_secret', 'salt', 32);
 // const ALGORITHM = 'aes-256-cbc';
@@ -1308,7 +1366,15 @@ app.listen(PORT, () => {
 // const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 // const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 
-// // --- AUTHENTICATION MIDDLEWARE WITH ACTIVITY TRACKING ---
+// // --- AUTHENTICATION & TRAFFIC MIDDLEWARE ---
+// app.use((req, res, next) => {
+//     // Log API Traffic (exclude admin/analytics endpoints to avoid noise)
+//     if (req.path.startsWith('/api') && !req.path.includes('/admin') && !req.path.includes('/analytics') && !req.path.includes('/attendance/progress')) {
+//         TrafficLog.create({ endpoint: req.path, method: req.method }).catch(() => {});
+//     }
+//     next();
+// });
+
 // const authenticateUser = (req, res, next) => {
 //     const authHeader = req.headers.authorization;
 //     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -1349,9 +1415,11 @@ app.listen(PORT, () => {
 //             user = new User({ name, email, picture, lastActive: new Date() });
 //             await user.save();
 //             console.log(`New user registered: ${email}`);
+//             AnalyticsEvent.create({ userEmail: email, eventType: 'auth', eventName: 'new_signup' }).catch(()=>{});
 //         } else {
 //             user.lastActive = new Date();
 //             await user.save();
+//             AnalyticsEvent.create({ userEmail: email, eventType: 'auth', eventName: 'login' }).catch(()=>{});
 //         }
 
 //         const sessionToken = jwt.sign(
@@ -1410,6 +1478,7 @@ app.listen(PORT, () => {
 //             oltUsername: username,
 //             oltPassword: encryptText(password)
 //         });
+//         AnalyticsEvent.create({ userEmail: req.user.email, eventType: 'action', eventName: 'save_olt_creds' }).catch(()=>{});
 //         res.json({ success: true });
 //     } catch (error) {
 //         res.status(500).json({ error: 'Failed to save credentials' });
@@ -1427,10 +1496,26 @@ app.listen(PORT, () => {
 //     try {
 //         const newFeedback = new Feedback({ userEmail: email, userName: name, message });
 //         await newFeedback.save();
+//         AnalyticsEvent.create({ userEmail: email, eventType: 'action', eventName: 'submit_feedback' }).catch(()=>{});
 //         res.json({ success: true, message: "Feedback submitted successfully." });
 //     } catch (error) {
 //         console.error("Feedback Error:", error);
 //         res.status(500).json({ error: "Server error saving feedback." });
+//     }
+// });
+
+// app.post('/api/analytics', authenticateUser, async (req, res) => {
+//     const { eventType, eventName, metadata } = req.body;
+//     try {
+//         await AnalyticsEvent.create({
+//             userEmail: req.user.email,
+//             eventType: eventType || 'interaction',
+//             eventName: eventName || 'unknown',
+//             metadata: metadata || {}
+//         });
+//         res.json({ success: true });
+//     } catch (error) {
+//         res.status(500).json({ error: 'Failed to log event' });
 //     }
 // });
 
@@ -1442,9 +1527,56 @@ app.listen(PORT, () => {
 //     }
 //     try {
 //         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
-//         const users = await User.find().sort({ lastActive: -1 }).select('-__v');
-//         res.json({ success: true, feedbacks, users });
+//         const users = await User.find().sort({ lastActive: -1 }).select('-__v -oltPassword');
+        
+//         // Count users who have successfully saved their OLT credentials
+//         const oltUsersCount = await User.countDocuments({ oltUsername: { $exists: true, $ne: '' } });
+
+//         // Analytics: Daily Active Users (Last 7 days)
+//         const dauData = await AnalyticsEvent.aggregate([
+//             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
+//             { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, uniqueUsers: { $addToSet: "$userEmail" } } },
+//             { $project: { date: "$_id", count: { $size: "$uniqueUsers" } } },
+//             { $sort: { date: 1 } }
+//         ]);
+
+//         // Analytics: Server Traffic (Last 7 days)
+//         const trafficData = await TrafficLog.aggregate([
+//             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
+//             { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, hits: { $sum: 1 } } },
+//             { $project: { date: "$_id", hits: 1 } },
+//             { $sort: { date: 1 } }
+//         ]);
+
+//         // Analytics: Feature Usage
+//         const featureUsage = await AnalyticsEvent.aggregate([
+//             { $match: { eventType: 'tab_click' } },
+//             { $group: { _id: "$eventName", clicks: { $sum: 1 } } },
+//             { $sort: { clicks: -1 } }
+//         ]);
+
+//         // Analytics: Button Clicks
+//         const interactions = await AnalyticsEvent.aggregate([
+//             { $match: { eventType: 'button_click' } },
+//             { $group: { _id: "$eventName", count: { $sum: 1 } } },
+//             { $sort: { count: -1 } },
+//             { $limit: 10 }
+//         ]);
+
+//         res.json({ 
+//             success: true, 
+//             feedbacks, 
+//             users,
+//             analytics: { 
+//                 dau: dauData, 
+//                 traffic: trafficData, 
+//                 features: featureUsage, 
+//                 interactions, 
+//                 oltUsersCount 
+//             }
+//         });
 //     } catch (error) {
+//         console.error("Admin Error:", error);
 //         res.status(500).json({ error: "Server error fetching admin data." });
 //     }
 // });
@@ -1640,7 +1772,6 @@ app.listen(PORT, () => {
 //     return res.data;
 // }
 
-// // Mimic Python's manual table extraction to bypass ASP.NET Delta formatting issues
 // function extractTableHtml(responseText) {
 //     const TABLE_ID = "ctl00_Main_AttendanceReport_GridViewAttendanceMerged";
 //     const marker = `id="${TABLE_ID}"`;

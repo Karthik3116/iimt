@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   Lock, LayoutDashboard, Activity, Users, MousePointer2, 
-  TrendingUp, Globe, CheckCircle2, MessageSquare, LogOut, Loader2, Server
+  TrendingUp, Globe, CheckCircle2, MessageSquare, LogOut, Loader2, Server,
+  X, Calendar, Clock, ArrowRight, UserCircle
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
@@ -355,7 +356,7 @@ const adminStyles = `
     margin-bottom: 2rem;
   }
 
-  /* Custom CSS Chart Refinements */
+  /* Custom CSS Bar Chart */
   .css-chart-wrapper {
     display: flex;
     align-items: flex-end;
@@ -475,11 +476,13 @@ const adminStyles = `
     border-radius: 16px;
     border: 1px solid var(--admin-border);
     transition: all 0.2s;
+    cursor: pointer;
   }
 
   .user-card:hover {
     border-color: var(--admin-accent);
     box-shadow: 0 4px 12px var(--admin-accent-light);
+    transform: translateY(-2px);
   }
 
   .user-avatar {
@@ -540,12 +543,6 @@ const adminStyles = `
     animation: pulse 2s infinite;
   }
 
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-    70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-  }
-
   /* --- FEEDBACK CARDS --- */
   .feedback-list {
     display: flex;
@@ -571,6 +568,193 @@ const adminStyles = `
   .fb-date { font-size: 0.8rem; color: #9CA3AF; font-weight: 500;}
   .fb-msg { font-size: 0.95rem; color: #4B5563; line-height: 1.5; margin: 0; }
 
+  /* --- MODAL (USER DETAILS) --- */
+  .admin-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: modalFadeIn 0.3s ease;
+    padding: 2rem;
+  }
+
+  @keyframes modalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .admin-modal {
+    background: var(--admin-bg);
+    width: 100%;
+    max-width: 900px;
+    max-height: 90vh;
+    border-radius: 24px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
+    animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes modalSlideUp {
+    from { transform: translateY(40px) scale(0.98); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  .admin-modal-header {
+    padding: 1.5rem 2rem;
+    background: var(--admin-card);
+    border-bottom: 1px solid var(--admin-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .admin-modal-user {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .admin-modal-user img {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    object-fit: cover;
+  }
+
+  .admin-modal-close {
+    background: var(--admin-bg);
+    border: 1px solid var(--admin-border);
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--admin-text-muted);
+    transition: all 0.2s;
+  }
+
+  .admin-modal-close:hover {
+    background: #FEE2E2;
+    color: var(--admin-danger);
+    border-color: #FCA5A5;
+  }
+
+  .admin-modal-body {
+    padding: 2rem;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  /* SVG Line Chart */
+  .svg-chart-container {
+    width: 100%;
+    height: 220px;
+    position: relative;
+    background: var(--admin-card);
+    border-radius: 16px;
+    border: 1px solid var(--admin-border);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .svg-chart {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .svg-grid-line { stroke: var(--admin-border); stroke-width: 1; stroke-dasharray: 4 4; }
+  .svg-area { fill: url(#goldGradient); opacity: 0.4; }
+  .svg-line { fill: none; stroke: var(--admin-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .svg-point { fill: #fff; stroke: var(--admin-accent); stroke-width: 2; transition: all 0.2s; cursor: pointer; }
+  .svg-point:hover { transform: scale(1.5); fill: var(--admin-accent); }
+  .svg-text { fill: var(--admin-text-muted); font-size: 12px; font-weight: 500; font-family: 'Inter'; text-anchor: middle; }
+
+  /* Timeline */
+  .timeline-container {
+    position: relative;
+    padding-left: 2rem;
+  }
+
+  .timeline-container::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--admin-border);
+  }
+
+  .timeline-day-group { margin-bottom: 2rem; }
+  
+  .timeline-day-header {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--admin-primary);
+    background: var(--admin-bg);
+    padding: 6px 12px;
+    border-radius: 8px;
+    display: inline-block;
+    margin-bottom: 1rem;
+    position: relative;
+    left: -1rem;
+    border: 1px solid var(--admin-border);
+  }
+
+  .timeline-item {
+    position: relative;
+    padding-bottom: 1.5rem;
+  }
+
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -2rem;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--admin-accent);
+    border: 3px solid var(--admin-bg);
+    box-shadow: 0 0 0 1px var(--admin-border);
+    z-index: 1;
+  }
+
+  .timeline-item.open-event::before { background: var(--admin-success); }
+
+  .timeline-content {
+    background: var(--admin-card);
+    padding: 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--admin-border);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  }
+
+  .timeline-time {
+    font-size: 0.8rem;
+    color: var(--admin-text-muted);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .timeline-action {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--admin-text-main);
+  }
+
   @media (max-width: 768px) {
     .admin-layout { flex-direction: column; overflow: auto; }
     .admin-sidebar { width: 100%; padding: 1.5rem; flex-direction: row; flex-wrap: wrap; justify-content: space-between; align-items: center; }
@@ -578,8 +762,65 @@ const adminStyles = `
     .admin-nav { flex-direction: row; width: 100%; margin-top: 1rem; overflow-x: auto; padding-bottom: 5px; }
     .admin-logout { margin-top: 1rem; width: 100%; justify-content: center; }
     .admin-main { padding: 1.5rem; }
+    .admin-modal-overlay { padding: 1rem; }
+    .admin-modal-header { flex-direction: column; gap: 1rem; position: relative; }
+    .admin-modal-close { position: absolute; top: 1rem; right: 1rem; }
   }
 `;
+
+// Helper component for drawing the SVG Line Chart
+const CustomLineChart = ({ data }) => {
+  if (!data || data.length === 0) return <div style={{textAlign:'center', color: '#888'}}>No activity data</div>;
+
+  const height = 150;
+  const width = 800; // Aspect ratio width
+  const paddingX = 40;
+  const paddingY = 20;
+  const effectiveWidth = width - (paddingX * 2);
+  const effectiveHeight = height - (paddingY * 2);
+
+  const maxVal = Math.max(...data.map(d => d.count), 5); // Ensure min height scale
+
+  const points = data.map((d, i) => {
+    const x = paddingX + (i / (data.length - 1)) * effectiveWidth;
+    const y = paddingY + effectiveHeight - ((d.count / maxVal) * effectiveHeight);
+    return { x, y, dateLabel: new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' }), val: d.count };
+  });
+
+  const pathD = `M ${points[0].x},${points[0].y} ` + points.slice(1).map(p => `L ${p.x},${p.y}`).join(' ');
+  const areaD = `${pathD} L ${points[points.length-1].x},${height} L ${points[0].x},${height} Z`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height + 20}`} className="svg-chart">
+      <defs>
+        <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--admin-accent)" stopOpacity="1" />
+          <stop offset="100%" stopColor="var(--admin-accent)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      
+      {/* Grid lines */}
+      <line x1={paddingX} y1={paddingY} x2={width-paddingX} y2={paddingY} className="svg-grid-line" />
+      <line x1={paddingX} y1={paddingY + effectiveHeight/2} x2={width-paddingX} y2={paddingY + effectiveHeight/2} className="svg-grid-line" />
+      <line x1={paddingX} y1={paddingY + effectiveHeight} x2={width-paddingX} y2={paddingY + effectiveHeight} className="svg-grid-line" />
+
+      {/* Area & Line */}
+      <path d={areaD} className="svg-area" />
+      <path d={pathD} className="svg-line" />
+
+      {/* Points & Labels */}
+      {points.map((p, i) => (
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r="5" className="svg-point">
+            <title>{p.val} Actions</title>
+          </circle>
+          <text x={p.x} y={height + 15} className="svg-text">{p.dateLabel}</text>
+          {p.val > 0 && <text x={p.x} y={p.y - 12} className="svg-text" style={{fill: 'var(--admin-primary)', fontWeight: 'bold'}}>{p.val}</text>}
+        </g>
+      ))}
+    </svg>
+  );
+};
 
 function AdminPortal() {
   const [password, setPassword] = useState('');
@@ -588,6 +829,11 @@ function AdminPortal() {
   const [loading, setLoading] = useState(false);
   const [adminTab, setAdminTab] = useState('overview');
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Specific User Details Modal State
+  const [selectedUserEmail, setSelectedUserEmail] = useState(null);
+  const [userDetailsData, setUserDetailsData] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Update clock
   useEffect(() => {
@@ -610,6 +856,53 @@ function AdminPortal() {
     }
   };
 
+  const fetchUserDetails = async (email) => {
+    setSelectedUserEmail(email);
+    setLoadingDetails(true);
+    setUserDetailsData(null);
+    try {
+        const res = await axios.post(`${API_BASE_URL}/api/admin/user-details`, { password, email });
+        
+        // Process the 7-day array to ensure all 7 days are present even if count is 0
+        const rawActivity = res.data.activityRaw || [];
+        const sevenDaysActivity = [];
+        const today = new Date();
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            // Format to YYYY-MM-DD
+            const iso = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); 
+            const found = rawActivity.find(a => a._id === iso);
+            sevenDaysActivity.push({
+                date: iso,
+                count: found ? found.count : 0
+            });
+        }
+
+        // Group recent events by Day for the timeline
+        const events = res.data.recentEventsRaw || [];
+        const groupedEvents = {};
+        events.forEach(ev => {
+            const dateObj = new Date(ev.timestamp);
+            const dateKey = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            if (!groupedEvents[dateKey]) groupedEvents[dateKey] = [];
+            groupedEvents[dateKey].push(ev);
+        });
+
+        setUserDetailsData({
+            user: res.data.user,
+            activityPattern: sevenDaysActivity,
+            groupedEvents
+        });
+    } catch (err) {
+        console.error(err);
+        alert('Failed to fetch user details.');
+        setSelectedUserEmail(null);
+    } finally {
+        setLoadingDetails(false);
+    }
+  };
+
   const timeAgo = (date) => {
     if (!date) return "Never";
     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
@@ -622,7 +915,11 @@ function AdminPortal() {
     return `${days} day${days !== 1 ? 's' : ''} ago`;
   };
 
-  const formatNum = (num) => num.toLocaleString('en-US');
+  const formatTimeStr = (dateStr) => {
+    return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute:'2-digit' });
+  };
+
+  const formatNum = (num) => num ? num.toLocaleString('en-US') : '0';
 
   if (!authData) {
     return (
@@ -666,7 +963,83 @@ function AdminPortal() {
   return (
     <div className="admin-wrapper admin-layout">
       <style>{adminStyles}</style>
-      
+
+      {/* MODAL OVERLAY FOR USER DETAILS */}
+      {selectedUserEmail && (
+        <div className="admin-modal-overlay" onClick={() => setSelectedUserEmail(null)}>
+            <div className="admin-modal" onClick={e => e.stopPropagation()}>
+                {loadingDetails ? (
+                    <div style={{ padding: '4rem', textAlign: 'center' }}>
+                        <Loader2 size={48} color="var(--admin-accent)" className="lucide-spin" style={{ margin: '0 auto' }} />
+                        <h3 style={{ marginTop: '1rem', color: 'var(--admin-primary)' }}>Loading User Profile...</h3>
+                    </div>
+                ) : userDetailsData ? (
+                    <>
+                        <div className="admin-modal-header">
+                            <div className="admin-modal-user">
+                                <img src={userDetailsData.user.picture || `https://ui-avatars.com/api/?name=${userDetailsData.user.name}&background=dba315&color=fff`} alt="" />
+                                <div>
+                                    <h2 style={{ margin: '0 0 4px 0', fontSize: '1.4rem', color: 'var(--admin-primary)' }}>{userDetailsData.user.name}</h2>
+                                    <div style={{ color: 'var(--admin-text-muted)', fontSize: '0.9rem', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                        <span>{userDetailsData.user.email}</span> &bull; 
+                                        <span>Section {userDetailsData.user.defaultSection}</span> &bull; 
+                                        <span style={{ color: userDetailsData.user.oltUsername ? 'var(--admin-success)' : 'var(--admin-danger)' }}>
+                                            {userDetailsData.user.oltUsername ? 'OLT Linked' : 'No OLT'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <button className="admin-modal-close" onClick={() => setSelectedUserEmail(null)}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="admin-modal-body">
+                            <h3 style={{ marginTop: 0, display: 'flex', alignItems:'center', gap: '8px', color: 'var(--admin-primary)' }}>
+                                <TrendingUp size={20} color="var(--admin-accent)" /> 7-Day Activity Pattern
+                            </h3>
+                            <div className="svg-chart-container">
+                                <CustomLineChart data={userDetailsData.activityPattern} />
+                            </div>
+
+                            <h3 style={{ marginTop: '2rem', display: 'flex', alignItems:'center', gap: '8px', color: 'var(--admin-primary)' }}>
+                                <Clock size={20} color="var(--admin-accent)" /> Session History
+                            </h3>
+                            {Object.keys(userDetailsData.groupedEvents).length === 0 ? (
+                                <p style={{ color: 'var(--admin-text-muted)' }}>No recent activity found.</p>
+                            ) : (
+                                <div className="timeline-container">
+                                    {Object.entries(userDetailsData.groupedEvents).map(([dateLabel, events]) => (
+                                        <div key={dateLabel} className="timeline-day-group">
+                                            <div className="timeline-day-header"><Calendar size={14} style={{ display: 'inline', verticalAlign: 'text-bottom', marginRight: '4px' }}/> {dateLabel}</div>
+                                            {events.map((ev, idx) => {
+                                                const isOpenEvent = ev.eventName === 'login' || ev.eventName === 'app_opened';
+                                                let actionLabel = ev.eventName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                                if (ev.eventType === 'tab_click') actionLabel = `Viewed ${ev.eventName.replace('tab_', '')} tab`;
+
+                                                return (
+                                                    <div key={idx} className={`timeline-item ${isOpenEvent ? 'open-event' : ''}`}>
+                                                        <div className="timeline-content">
+                                                            <div className="timeline-time"><Clock size={12}/> {formatTimeStr(ev.timestamp)}</div>
+                                                            <div className="timeline-action">
+                                                                {isOpenEvent ? '🚀 App Opened / Session Started' : actionLabel}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                ) : (
+                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--admin-danger)' }}>Error loading data.</div>
+                )}
+            </div>
+        </div>
+      )}
+
       {/* SIDEBAR */}
       <aside className="admin-sidebar">
         <div className="admin-brand">
@@ -809,13 +1182,14 @@ function AdminPortal() {
             {/* USER DATABASE */}
             <div className="admin-panel">
               <h3 className="panel-header"><Users size={20}/> Active User Database</h3>
+              <p style={{ marginTop: '-15px', marginBottom: '20px', fontSize: '0.85rem', color: 'var(--admin-text-muted)' }}>Click on any user card to view detailed analytics and session history.</p>
               <div className="user-grid">
                 {users.map(u => {
                   const timeAgoStr = timeAgo(u.lastActive);
                   const isOnline = timeAgoStr === "Just now" || timeAgoStr.includes("min");
                   
                   return (
-                    <div key={u._id} className="user-card">
+                    <div key={u._id} className="user-card" onClick={() => fetchUserDetails(u.email)}>
                       <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} className="user-avatar" alt={u.name}/>
                       <div className="user-info">
                         <div className="user-name" title={u.name}>{u.name}</div>
