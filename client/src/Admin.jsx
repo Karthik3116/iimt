@@ -1,18 +1,19 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { 
-  Lock, LayoutDashboard, Activity, Users, MousePointer2, 
+import {
+  Lock, LayoutDashboard, Activity, Users, MousePointer2,
   TrendingUp, Globe, CheckCircle2, MessageSquare, LogOut, Loader2, Server,
   X, Calendar, Clock, ArrowRight, UserCircle, Download, Filter, Search,
   BarChart3, LineChart, PieChart, Settings, Bell, Eye, EyeOff,
   MapPin, Zap, AlertCircle, ChevronRight, ArrowUpRight, ArrowDownRight,
-  MoreVertical, Star, Radio, Trash2, Mail, Phone, Badge, Hexagon
+  MoreVertical, Star, Radio, Trash2, Mail, Phone, Badge, Hexagon,
+  Menu, Home, Briefcase, AreaChart, TrendingDown
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 const adminStyles = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@600;700;800&display=swap');
 
   * {
     margin: 0;
@@ -21,37 +22,40 @@ const adminStyles = `
   }
 
   :root {
-    --admin-primary: #0F172A;
-    --admin-secondary: #1E293B;
-    --admin-accent: #DBA315;
-    --admin-accent-light: rgba(219, 163, 21, 0.1);
-    --admin-accent-lighter: rgba(219, 163, 21, 0.05);
-    --admin-bg: #F8FAFC;
-    --admin-card: #FFFFFF;
-    --admin-text-main: #0F172A;
-    --admin-text-muted: #64748B;
-    --admin-text-light: #94A3B8;
-    --admin-border: #E2E8F0;
-    --admin-success: #10B981;
-    --admin-success-light: rgba(16, 185, 129, 0.1);
-    --admin-danger: #EF4444;
-    --admin-danger-light: rgba(239, 68, 68, 0.1);
-    --admin-warning: #F59E0B;
-    --admin-warning-light: rgba(245, 158, 11, 0.1);
-    --admin-info: #3B82F6;
-    --admin-info-light: rgba(59, 130, 246, 0.1);
-    --admin-purple: #8B5CF6;
-    --admin-purple-light: rgba(139, 92, 246, 0.1);
+    --primary: #0F172A;
+    --secondary: #1E293B;
+    --accent: #DBA315;
+    --accent-light: rgba(219, 163, 21, 0.1);
+    --accent-lighter: rgba(219, 163, 21, 0.05);
+    --bg: #F8FAFC;
+    --card: #FFFFFF;
+    --text-main: #0F172A;
+    --text-muted: #64748B;
+    --text-light: #94A3B8;
+    --border: #E2E8F0;
+    --success: #10B981;
+    --success-light: rgba(16, 185, 129, 0.1);
+    --danger: #EF4444;
+    --danger-light: rgba(239, 68, 68, 0.1);
+    --warning: #F59E0B;
+    --warning-light: rgba(245, 158, 11, 0.1);
+    --info: #3B82F6;
+    --info-light: rgba(59, 130, 246, 0.1);
+    --purple: #8B5CF6;
+    --purple-light: rgba(139, 92, 246, 0.1);
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.2);
   }
 
   html, body {
-    background: var(--admin-bg);
-    color: var(--admin-text-main);
+    background: var(--bg);
+    color: var(--text-main);
+    font-family: 'Inter', sans-serif;
   }
 
   .admin-wrapper {
     font-family: 'Inter', sans-serif;
-    color: var(--admin-text-main);
+    color: var(--text-main);
   }
 
   /* --- SCROLLBAR --- */
@@ -65,12 +69,20 @@ const adminStyles = `
   }
 
   ::-webkit-scrollbar-thumb {
-    background: var(--admin-border);
+    background: var(--border);
     border-radius: 4px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--admin-text-light);
+    background: var(--text-light);
+  }
+
+  /* --- GLASSMORPHISM EFFECT --- */
+  .glass-effect {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.1);
   }
 
   /* --- LOGIN SCREEN --- */
@@ -79,7 +91,7 @@ const adminStyles = `
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    background: linear-gradient(135deg, var(--admin-primary) 0%, var(--admin-secondary) 100%);
+    background: linear-gradient(135deg, var(--primary) 0%, #1a273d 50%, var(--secondary) 100%);
     position: relative;
     overflow: hidden;
     perspective: 1000px;
@@ -90,8 +102,8 @@ const adminStyles = `
     position: absolute;
     width: 800px;
     height: 800px;
-    background: radial-gradient(circle, var(--admin-accent), transparent);
-    opacity: 0.08;
+    background: radial-gradient(circle, var(--accent), transparent);
+    opacity: 0.1;
     border-radius: 50%;
     top: -300px;
     right: -200px;
@@ -103,8 +115,8 @@ const adminStyles = `
     position: absolute;
     width: 600px;
     height: 600px;
-    background: radial-gradient(circle, var(--admin-info), transparent);
-    opacity: 0.05;
+    background: radial-gradient(circle, var(--info), transparent);
+    opacity: 0.06;
     border-radius: 50%;
     bottom: -200px;
     left: -100px;
@@ -119,10 +131,10 @@ const adminStyles = `
   .admin-login-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 3rem;
+    gap: 4rem;
     z-index: 10;
     width: 100%;
-    max-width: 1000px;
+    max-width: 1100px;
     padding: 2rem;
     align-items: center;
   }
@@ -132,57 +144,60 @@ const adminStyles = `
   }
 
   .admin-login-welcome h1 {
-    font-size: 3rem;
+    font-size: 3.5rem;
     font-weight: 900;
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
     line-height: 1.1;
+    font-family: 'Poppins', sans-serif;
   }
 
   .admin-login-welcome p {
     font-size: 1.1rem;
-    color: rgba(255, 255, 255, 0.7);
-    margin-bottom: 2rem;
-    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 2.5rem;
+    line-height: 1.7;
   }
 
   .feature-list {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.5rem;
   }
 
   .feature-item {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    color: rgba(255, 255, 255, 0.8);
+    gap: 1.2rem;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 1rem;
   }
 
   .feature-icon {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     border-radius: 12px;
     background: rgba(219, 163, 21, 0.2);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    border: 1px solid rgba(219, 163, 21, 0.3);
   }
 
   .admin-login-card {
-    background: rgba(255, 255, 255, 0.97);
-    backdrop-filter: blur(20px);
-    padding: 3rem;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(30px);
+    padding: 3.5rem;
     border-radius: 32px;
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    animation: slideInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes slideInUp {
     from {
       opacity: 0;
-      transform: translateY(40px);
+      transform: translateY(50px);
     }
     to {
       opacity: 1;
@@ -191,14 +206,15 @@ const adminStyles = `
   }
 
   .admin-login-card h2 {
-    font-size: 2rem;
+    font-size: 2.2rem;
     font-weight: 800;
     margin-bottom: 0.5rem;
-    color: var(--admin-primary);
+    color: var(--primary);
+    font-family: 'Poppins', sans-serif;
   }
 
   .admin-login-card .login-subtitle {
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     margin-bottom: 2rem;
     font-size: 0.95rem;
   }
@@ -211,83 +227,54 @@ const adminStyles = `
   .admin-input-group label {
     display: block;
     font-weight: 600;
-    color: var(--admin-text-main);
-    margin-bottom: 0.5rem;
+    color: var(--text-main);
+    margin-bottom: 0.6rem;
     font-size: 0.9rem;
   }
 
   .admin-login-input {
     width: 100%;
-    padding: 14px 16px;
+    padding: 14px 18px;
     border-radius: 14px;
-    border: 2px solid var(--admin-border);
+    border: 2px solid var(--border);
     font-size: 1rem;
-    transition: all 0.3s;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     background: #fff;
     outline: none;
     font-family: 'Inter', sans-serif;
   }
 
   .admin-login-input:focus {
-    border-color: var(--admin-accent);
-    box-shadow: 0 0 0 5px var(--admin-accent-light);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 6px var(--accent-light);
   }
 
   .admin-btn {
     width: 100%;
-    padding: 14px;
-    background: linear-gradient(135deg, var(--admin-accent) 0%, #c59212 100%);
+    padding: 14px 18px;
+    background: linear-gradient(135deg, var(--accent) 0%, #c59212 100%);
     color: white;
     border: none;
     border-radius: 14px;
     font-size: 1rem;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.3s;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    box-shadow: 0 4px 15px rgba(219, 163, 21, 0.3);
+    gap: 10px;
+    box-shadow: 0 8px 20px rgba(219, 163, 21, 0.3);
   }
 
   .admin-btn:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(219, 163, 21, 0.4);
+    transform: translateY(-3px);
+    box-shadow: 0 12px 30px rgba(219, 163, 21, 0.4);
   }
 
   .admin-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
-    transform: none;
-  }
-
-  .admin-btn-secondary {
-    background: var(--admin-bg);
-    color: var(--admin-primary);
-    border: 2px solid var(--admin-border);
-    box-shadow: none;
-  }
-
-  .admin-btn-secondary:hover:not(:disabled) {
-    border-color: var(--admin-accent);
-    background: var(--admin-accent-lighter);
-  }
-
-  .admin-btn-small {
-    padding: 10px 16px;
-    font-size: 0.9rem;
-    border-radius: 10px;
-  }
-
-  .admin-btn-icon {
-    padding: 10px;
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
 
   /* --- DASHBOARD LAYOUT --- */
@@ -295,19 +282,21 @@ const adminStyles = `
     display: grid;
     grid-template-columns: 280px 1fr;
     height: 100vh;
-    background: var(--admin-bg);
+    background: linear-gradient(135deg, var(--bg) 0%, #f1f5f9 100%);
     overflow: hidden;
   }
 
+  /* --- SIDEBAR --- */
   .admin-sidebar {
-    background: var(--admin-primary);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
+    backdrop-filter: blur(20px);
     color: white;
     display: flex;
     flex-direction: column;
     padding: 2rem 1.5rem;
     overflow-y: auto;
     border-right: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   }
 
   .admin-brand {
@@ -318,14 +307,15 @@ const adminStyles = `
     font-weight: 900;
     color: white;
     margin-bottom: 2.5rem;
+    font-family: 'Poppins', sans-serif;
   }
 
   .admin-brand .icon-wrap {
-    background: linear-gradient(135deg, var(--admin-accent), #c59212);
+    background: linear-gradient(135deg, var(--accent), #c59212);
     padding: 10px;
     border-radius: 12px;
     display: flex;
-    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.3);
+    box-shadow: 0 4px 15px rgba(219, 163, 21, 0.3);
   }
 
   .admin-sidebar-section {
@@ -333,11 +323,11 @@ const adminStyles = `
   }
 
   .sidebar-section-label {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 800;
-    color: #94A3B8;
+    color: rgba(148, 163, 184, 0.6);
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 1.2px;
     margin-bottom: 1rem;
     padding: 0 12px;
   }
@@ -354,10 +344,10 @@ const adminStyles = `
     gap: 12px;
     padding: 12px 14px;
     border-radius: 12px;
-    color: #94A3B8;
+    color: rgba(148, 163, 184, 0.8);
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     border: none;
     background: transparent;
     text-align: left;
@@ -366,14 +356,14 @@ const adminStyles = `
   }
 
   .admin-nav-item:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.1);
     color: white;
   }
 
   .admin-nav-item.active {
-    background: linear-gradient(135deg, var(--admin-accent), rgba(219, 163, 21, 0.8));
+    background: linear-gradient(135deg, var(--accent), rgba(219, 163, 21, 0.8));
     color: white;
-    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.3);
+    box-shadow: 0 4px 15px rgba(219, 163, 21, 0.3);
   }
 
   .admin-nav-item.active::before {
@@ -399,9 +389,9 @@ const adminStyles = `
     display: flex;
     align-items: center;
     gap: 12px;
+    justify-content: center;
     transition: all 0.2s;
     width: 100%;
-    justify-content: center;
   }
 
   .admin-logout:hover {
@@ -410,6 +400,7 @@ const adminStyles = `
     border-color: rgba(239, 68, 68, 0.4);
   }
 
+  /* --- MAIN AREA --- */
   .admin-main {
     display: flex;
     flex-direction: column;
@@ -418,14 +409,16 @@ const adminStyles = `
     scroll-behavior: smooth;
   }
 
+  /* --- TOPBAR --- */
   .admin-topbar {
-    background: var(--admin-card);
-    border-bottom: 1px solid var(--admin-border);
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--glass-border);
     padding: 1.5rem 2rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
     position: sticky;
     top: 0;
     z-index: 15;
@@ -445,17 +438,18 @@ const adminStyles = `
   .topbar-search input {
     width: 100%;
     padding: 10px 14px 10px 40px;
-    border: 2px solid var(--admin-border);
+    border: 2px solid var(--border);
     border-radius: 10px;
     font-size: 0.95rem;
     transition: all 0.2s;
-    background: var(--admin-bg);
+    background: var(--card);
   }
 
   .topbar-search input:focus {
     outline: none;
-    border-color: var(--admin-accent);
+    border-color: var(--accent);
     background: white;
+    box-shadow: 0 0 0 4px var(--accent-light);
   }
 
   .topbar-search svg {
@@ -463,7 +457,7 @@ const adminStyles = `
     left: 12px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     pointer-events: none;
   }
 
@@ -476,9 +470,9 @@ const adminStyles = `
   .topbar-btn {
     background: transparent;
     border: none;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     cursor: pointer;
-    padding: 8px 12px;
+    padding: 8px 14px;
     border-radius: 10px;
     transition: all 0.2s;
     display: flex;
@@ -489,8 +483,8 @@ const adminStyles = `
   }
 
   .topbar-btn:hover {
-    background: var(--admin-bg);
-    color: var(--admin-text-main);
+    background: var(--accent-lighter);
+    color: var(--accent);
   }
 
   .topbar-user {
@@ -498,23 +492,26 @@ const adminStyles = `
     align-items: center;
     gap: 10px;
     padding: 8px 14px;
-    background: var(--admin-bg);
+    background: var(--card);
     border-radius: 10px;
     cursor: pointer;
+    border: 1px solid var(--border);
   }
 
   .topbar-user-avatar {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: var(--admin-accent-light);
+    background: linear-gradient(135deg, var(--accent), #c59212);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--admin-accent);
+    color: white;
     font-weight: 700;
+    font-size: 0.85rem;
   }
 
+  /* --- CONTENT AREA --- */
   .admin-content {
     padding: 2.5rem;
     flex: 1;
@@ -540,21 +537,22 @@ const adminStyles = `
   .admin-title {
     font-size: 2.2rem;
     font-weight: 900;
-    color: var(--admin-primary);
+    color: var(--primary);
     margin: 0 0 0.5rem 0;
     display: flex;
     align-items: center;
     gap: 12px;
+    font-family: 'Poppins', sans-serif;
   }
 
   .admin-subtitle {
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     font-weight: 500;
     font-size: 0.95rem;
     margin: 0;
   }
 
-  /* --- FILTER & ACTION BAR --- */
+  /* --- ACTION BAR --- */
   .action-bar {
     display: flex;
     gap: 1rem;
@@ -569,14 +567,14 @@ const adminStyles = `
 
   .filter-btn {
     padding: 10px 16px;
-    background: var(--admin-card);
-    border: 2px solid var(--admin-border);
+    background: var(--card);
+    border: 2px solid var(--border);
     border-radius: 10px;
     font-size: 0.9rem;
     font-weight: 600;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -584,9 +582,9 @@ const adminStyles = `
 
   .filter-btn:hover,
   .filter-btn.active {
-    border-color: var(--admin-accent);
-    color: var(--admin-accent);
-    background: var(--admin-accent-lighter);
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-lighter);
   }
 
   /* --- STATS GRID --- */
@@ -598,10 +596,11 @@ const adminStyles = `
   }
 
   .stat-card {
-    background: var(--admin-card);
+    background: var(--card);
+    backdrop-filter: blur(10px);
     padding: 1.75rem;
     border-radius: 20px;
-    border: 1px solid var(--admin-border);
+    border: 1px solid var(--border);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
     display: flex;
     align-items: flex-start;
@@ -611,9 +610,9 @@ const adminStyles = `
   }
 
   .stat-card:hover {
-    transform: translateY(-6px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
-    border-color: var(--admin-accent-light);
+    transform: translateY(-8px);
+    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.1);
+    border-color: var(--accent-light);
   }
 
   .stat-card:nth-child(1) { animation-delay: 0.1s; }
@@ -642,24 +641,14 @@ const adminStyles = `
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    position: relative;
   }
 
-  .stat-icon::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 16px;
-    opacity: 0.1;
-    filter: blur(12px);
-  }
-
-  .stat-icon.gold { background: var(--admin-accent-light); color: var(--admin-accent); }
-  .stat-icon.blue { background: var(--admin-info-light); color: var(--admin-info); }
-  .stat-icon.green { background: var(--admin-success-light); color: var(--admin-success); }
-  .stat-icon.purple { background: var(--admin-purple-light); color: var(--admin-purple); }
-  .stat-icon.danger { background: var(--admin-danger-light); color: var(--admin-danger); }
-  .stat-icon.warning { background: var(--admin-warning-light); color: var(--admin-warning); }
+  .stat-icon.gold { background: var(--accent-light); color: var(--accent); }
+  .stat-icon.blue { background: var(--info-light); color: var(--info); }
+  .stat-icon.green { background: var(--success-light); color: var(--success); }
+  .stat-icon.purple { background: var(--purple-light); color: var(--purple); }
+  .stat-icon.danger { background: var(--danger-light); color: var(--danger); }
+  .stat-icon.warning { background: var(--warning-light); color: var(--warning); }
 
   .stat-info {
     flex: 1;
@@ -667,7 +656,7 @@ const adminStyles = `
 
   .stat-label {
     font-size: 0.85rem;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -677,7 +666,7 @@ const adminStyles = `
   .stat-value {
     font-size: 2rem;
     font-weight: 900;
-    color: var(--admin-text-main);
+    color: var(--text-main);
     line-height: 1;
     margin-bottom: 0.5rem;
   }
@@ -691,14 +680,14 @@ const adminStyles = `
   }
 
   .stat-change.positive {
-    color: var(--admin-success);
+    color: var(--success);
   }
 
   .stat-change.negative {
-    color: var(--admin-danger);
+    color: var(--danger);
   }
 
-  /* --- CHARTS & CONTAINERS --- */
+  /* --- CHART GRID --- */
   .chart-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
@@ -707,16 +696,18 @@ const adminStyles = `
   }
 
   .admin-panel {
-    background: var(--admin-card);
+    background: var(--card);
+    backdrop-filter: blur(10px);
     padding: 2rem;
     border-radius: 20px;
-    border: 1px solid var(--admin-border);
+    border: 1px solid var(--border);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-    transition: all 0.3s;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .admin-panel:hover {
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+    border-color: var(--accent-light);
   }
 
   .panel-header {
@@ -732,7 +723,7 @@ const adminStyles = `
     gap: 10px;
     font-size: 1.2rem;
     font-weight: 700;
-    color: var(--admin-primary);
+    color: var(--text-main);
     margin: 0;
   }
 
@@ -742,9 +733,9 @@ const adminStyles = `
   }
 
   .panel-action-btn {
-    background: var(--admin-bg);
-    border: 1px solid var(--admin-border);
-    color: var(--admin-text-muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
     border-radius: 8px;
     padding: 8px;
     cursor: pointer;
@@ -752,9 +743,9 @@ const adminStyles = `
   }
 
   .panel-action-btn:hover {
-    background: var(--admin-accent-lighter);
-    border-color: var(--admin-accent);
-    color: var(--admin-accent);
+    background: var(--accent-lighter);
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   /* --- CSS BAR CHART --- */
@@ -764,7 +755,7 @@ const adminStyles = `
     justify-content: space-between;
     height: 220px;
     padding: 20px 0 10px;
-    border-bottom: 2px solid var(--admin-border);
+    border-bottom: 2px solid var(--border);
     position: relative;
     gap: 8px;
   }
@@ -778,7 +769,6 @@ const adminStyles = `
     min-width: 0;
     height: 100%;
     position: relative;
-    group: hover;
   }
 
   .css-chart-bar {
@@ -791,15 +781,15 @@ const adminStyles = `
   }
 
   .css-chart-bar.gold {
-    background: linear-gradient(180deg, var(--admin-accent) 0%, rgba(219, 163, 21, 0.3) 100%);
+    background: linear-gradient(180deg, var(--accent) 0%, rgba(219, 163, 21, 0.3) 100%);
   }
 
   .css-chart-bar.green {
-    background: linear-gradient(180deg, var(--admin-success) 0%, rgba(16, 185, 129, 0.3) 100%);
+    background: linear-gradient(180deg, var(--success) 0%, rgba(16, 185, 129, 0.3) 100%);
   }
 
   .css-chart-bar.blue {
-    background: linear-gradient(180deg, var(--admin-info) 0%, rgba(59, 130, 246, 0.3) 100%);
+    background: linear-gradient(180deg, var(--info) 0%, rgba(59, 130, 246, 0.3) 100%);
   }
 
   .css-chart-bar:hover {
@@ -812,7 +802,7 @@ const adminStyles = `
     bottom: calc(100% + 12px);
     left: 50%;
     transform: translateX(-50%);
-    background: var(--admin-primary);
+    background: var(--primary);
     color: white;
     padding: 8px 12px;
     border-radius: 8px;
@@ -834,12 +824,12 @@ const adminStyles = `
   .css-chart-label {
     margin-top: 12px;
     font-size: 0.8rem;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     text-align: center;
   }
 
-  /* --- LISTS & TABLES --- */
+  /* --- LIST STYLES --- */
   .list-container {
     display: flex;
     flex-direction: column;
@@ -854,7 +844,7 @@ const adminStyles = `
     margin-bottom: 1rem;
     font-size: 0.85rem;
     font-weight: 700;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -866,27 +856,27 @@ const adminStyles = `
     align-items: center;
     padding: 14px 16px;
     border-radius: 12px;
-    background: var(--admin-bg);
-    transition: all 0.2s;
+    background: var(--bg);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     border: 1px solid transparent;
   }
 
   .list-row:hover {
-    background: #fff;
-    border-color: var(--admin-border);
+    background: white;
+    border-color: var(--border);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     transform: translateX(4px);
   }
 
   .list-name {
     font-weight: 600;
-    color: var(--admin-primary);
+    color: var(--text-main);
     text-transform: capitalize;
   }
 
   .list-badge {
-    background: var(--admin-accent-light);
-    color: var(--admin-accent);
+    background: var(--accent-light);
+    color: var(--accent);
     padding: 6px 12px;
     border-radius: 20px;
     font-size: 0.85rem;
@@ -894,17 +884,7 @@ const adminStyles = `
     text-align: center;
   }
 
-  .list-badge.blue {
-    background: var(--admin-info-light);
-    color: var(--admin-info);
-  }
-
-  .list-badge.green {
-    background: var(--admin-success-light);
-    color: var(--admin-success);
-  }
-
-  /* --- USER CARDS --- */
+  /* --- USER GRID --- */
   .user-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -915,17 +895,36 @@ const adminStyles = `
     display: flex;
     flex-direction: column;
     padding: 1.5rem;
-    background: var(--admin-card);
+    background: var(--card);
     border-radius: 18px;
-    border: 1px solid var(--admin-border);
+    border: 1px solid var(--border);
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .user-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--info), var(--success));
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .user-card:hover {
-    border-color: var(--admin-accent);
-    box-shadow: 0 12px 24px var(--admin-accent-light);
+    border-color: var(--accent);
+    box-shadow: 0 16px 32px var(--accent-light);
     transform: translateY(-8px);
+  }
+
+  .user-card:hover::before {
+    transform: scaleX(1);
   }
 
   .user-card-header {
@@ -941,27 +940,17 @@ const adminStyles = `
     height: 56px;
     border-radius: 14px;
     object-fit: cover;
-    background: var(--admin-bg);
-    border: 2px solid var(--admin-border);
+    background: var(--bg);
+    border: 2px solid var(--border);
   }
 
   .user-status-badge {
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: var(--admin-success);
-    box-shadow: 0 0 0 3px var(--admin-success-light);
+    background: var(--success);
+    box-shadow: 0 0 0 3px var(--success-light);
     animation: pulse 2s infinite;
-  }
-
-  .user-badge {
-    background: var(--admin-bg);
-    padding: 6px 10px;
-    border-radius: 8px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--admin-text-muted);
-    text-transform: uppercase;
   }
 
   .user-info {
@@ -970,14 +959,14 @@ const adminStyles = `
 
   .user-name {
     font-weight: 700;
-    color: var(--admin-primary);
+    color: var(--text-main);
     font-size: 1.05rem;
     margin-bottom: 4px;
   }
 
   .user-email {
     font-size: 0.85rem;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     margin-bottom: 8px;
   }
 
@@ -986,7 +975,7 @@ const adminStyles = `
     align-items: center;
     gap: 6px;
     font-size: 0.85rem;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     margin-bottom: 4px;
   }
 
@@ -995,18 +984,18 @@ const adminStyles = `
     gap: 0.5rem;
     margin-top: 1.5rem;
     padding-top: 1.5rem;
-    border-top: 1px solid var(--admin-border);
+    border-top: 1px solid var(--border);
   }
 
   .user-action-btn {
     flex: 1;
     padding: 10px;
-    border: 1px solid var(--admin-border);
-    background: var(--admin-bg);
+    border: 1px solid var(--border);
+    background: var(--bg);
     border-radius: 10px;
     cursor: pointer;
     font-weight: 600;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     transition: all 0.2s;
     display: flex;
     align-items: center;
@@ -1016,9 +1005,9 @@ const adminStyles = `
   }
 
   .user-action-btn:hover {
-    border-color: var(--admin-accent);
-    background: var(--admin-accent-lighter);
-    color: var(--admin-accent);
+    border-color: var(--accent);
+    background: var(--accent-lighter);
+    color: var(--accent);
   }
 
   /* --- FEEDBACK CARDS --- */
@@ -1031,15 +1020,16 @@ const adminStyles = `
   .feedback-card {
     background: linear-gradient(135deg, #FFFAF0 0%, #FEF9E7 100%);
     border: 1px solid #FEF08A;
-    border-left: 4px solid var(--admin-accent);
+    border-left: 4px solid var(--accent);
     padding: 1.5rem;
     border-radius: 14px;
-    transition: all 0.2s;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .feedback-card:hover {
-    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.1);
+    box-shadow: 0 8px 20px rgba(219, 163, 21, 0.15);
     border-left-color: #c59212;
+    transform: translateX(4px);
   }
 
   .fb-header {
@@ -1051,7 +1041,7 @@ const adminStyles = `
 
   .fb-name {
     font-weight: 700;
-    color: var(--admin-primary);
+    color: var(--text-main);
     font-size: 0.95rem;
   }
 
@@ -1059,12 +1049,6 @@ const adminStyles = `
     font-size: 0.8rem;
     color: #9CA3AF;
     font-weight: 500;
-  }
-
-  .fb-rating {
-    display: flex;
-    gap: 4px;
-    margin-top: 0.5rem;
   }
 
   .fb-msg {
@@ -1075,7 +1059,7 @@ const adminStyles = `
     font-weight: 500;
   }
 
-  /* --- MODAL (USER DETAILS) --- */
+  /* --- MODAL --- */
   .admin-modal-overlay {
     position: fixed;
     inset: 0;
@@ -1095,7 +1079,7 @@ const adminStyles = `
   }
 
   .admin-modal {
-    background: var(--admin-bg);
+    background: var(--card);
     width: 100%;
     max-width: 1100px;
     max-height: 90vh;
@@ -1105,6 +1089,7 @@ const adminStyles = `
     overflow: hidden;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
     animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    border: 1px solid var(--border);
   }
 
   @keyframes modalSlideUp {
@@ -1120,8 +1105,8 @@ const adminStyles = `
 
   .admin-modal-header {
     padding: 2rem;
-    background: var(--admin-card);
-    border-bottom: 1px solid var(--admin-border);
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
@@ -1141,13 +1126,13 @@ const adminStyles = `
     height: 72px;
     border-radius: 16px;
     object-fit: cover;
-    border: 2px solid var(--admin-border);
+    border: 2px solid var(--border);
   }
 
   .modal-user-info h2 {
     margin: 0 0 8px 0;
     font-size: 1.6rem;
-    color: var(--admin-primary);
+    color: var(--text-main);
   }
 
   .modal-user-meta {
@@ -1155,7 +1140,7 @@ const adminStyles = `
     gap: 1rem;
     flex-wrap: wrap;
     font-size: 0.9rem;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
   }
 
   .modal-user-meta span {
@@ -1165,8 +1150,8 @@ const adminStyles = `
   }
 
   .admin-modal-close {
-    background: var(--admin-bg);
-    border: 2px solid var(--admin-border);
+    background: var(--bg);
+    border: 2px solid var(--border);
     border-radius: 50%;
     width: 44px;
     height: 44px;
@@ -1174,15 +1159,15 @@ const adminStyles = `
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     transition: all 0.2s;
     flex-shrink: 0;
   }
 
   .admin-modal-close:hover {
-    background: var(--admin-danger-light);
-    color: var(--admin-danger);
-    border-color: var(--admin-danger);
+    background: var(--danger-light);
+    color: var(--danger);
+    border-color: var(--danger);
   }
 
   .admin-modal-body {
@@ -1205,7 +1190,7 @@ const adminStyles = `
     gap: 10px;
     font-size: 1.15rem;
     font-weight: 700;
-    color: var(--admin-primary);
+    color: var(--text-main);
     margin-bottom: 1.5rem;
   }
 
@@ -1214,9 +1199,9 @@ const adminStyles = `
     width: 100%;
     height: 240px;
     position: relative;
-    background: var(--admin-bg);
+    background: var(--bg);
     border-radius: 16px;
-    border: 1px solid var(--admin-border);
+    border: 1px solid var(--border);
     padding: 1.5rem;
   }
 
@@ -1226,12 +1211,12 @@ const adminStyles = `
     overflow: visible;
   }
 
-  .svg-grid-line { stroke: var(--admin-border); stroke-width: 1; stroke-dasharray: 4 4; }
+  .svg-grid-line { stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 4; }
   .svg-area { fill: url(#goldGradient); opacity: 0.35; }
-  .svg-line { fill: none; stroke: var(--admin-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-  .svg-point { fill: #fff; stroke: var(--admin-accent); stroke-width: 3; transition: all 0.2s; cursor: pointer; }
-  .svg-point:hover { r: 7; fill: var(--admin-accent); }
-  .svg-text { fill: var(--admin-text-muted); font-size: 12px; font-weight: 600; font-family: 'Inter'; text-anchor: middle; }
+  .svg-line { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .svg-point { fill: white; stroke: var(--accent); stroke-width: 3; transition: all 0.2s; cursor: pointer; }
+  .svg-point:hover { r: 7; fill: var(--accent); }
+  .svg-text { fill: var(--text-muted); font-size: 12px; font-weight: 600; font-family: 'Inter'; text-anchor: middle; }
 
   /* --- TIMELINE --- */
   .timeline-container {
@@ -1246,7 +1231,7 @@ const adminStyles = `
     top: 0;
     bottom: 0;
     width: 2px;
-    background: linear-gradient(180deg, var(--admin-accent), transparent);
+    background: linear-gradient(180deg, var(--accent), transparent);
   }
 
   .timeline-day-group {
@@ -1256,15 +1241,15 @@ const adminStyles = `
   .timeline-day-header {
     font-size: 0.9rem;
     font-weight: 700;
-    color: var(--admin-primary);
-    background: var(--admin-accent-lighter);
+    color: var(--text-main);
+    background: var(--accent-lighter);
     padding: 8px 14px;
     border-radius: 10px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     margin-bottom: 1rem;
-    border: 1px solid var(--admin-accent-light);
+    border: 1px solid var(--accent-light);
   }
 
   .timeline-item {
@@ -1280,27 +1265,27 @@ const adminStyles = `
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--admin-accent);
+    background: var(--accent);
     border: 3px solid white;
-    box-shadow: 0 0 0 2px var(--admin-border);
+    box-shadow: 0 0 0 2px var(--border);
     z-index: 1;
   }
 
   .timeline-item.open-event::before {
-    background: var(--admin-success);
+    background: var(--success);
   }
 
   .timeline-content {
-    background: var(--admin-card);
+    background: var(--bg);
     padding: 1.25rem;
     border-radius: 12px;
-    border: 1px solid var(--admin-border);
+    border: 1px solid var(--border);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
   }
 
   .timeline-time {
     font-size: 0.8rem;
-    color: var(--admin-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -1311,10 +1296,34 @@ const adminStyles = `
   .timeline-action {
     font-size: 0.95rem;
     font-weight: 600;
-    color: var(--admin-text-main);
+    color: var(--text-main);
   }
 
-  /* --- LOADING & ANIMATIONS --- */
+  /* --- EMPTY STATE --- */
+  .empty-state {
+    text-align: center;
+    padding: 3rem 2rem;
+    color: var(--text-muted);
+  }
+
+  .empty-state-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+  }
+
+  .empty-state-text {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+  }
+
+  .empty-state-subtext {
+    font-size: 0.9rem;
+    color: var(--text-light);
+  }
+
+  /* --- ANIMATIONS --- */
   .lucide-spin {
     animation: spin 1s linear infinite;
   }
@@ -1329,28 +1338,6 @@ const adminStyles = `
     50% { opacity: 0.5; }
   }
 
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    color: var(--admin-text-muted);
-  }
-
-  .empty-state-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-
-  .empty-state-text {
-    font-size: 1.1rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .empty-state-subtext {
-    font-size: 0.9rem;
-    color: var(--admin-text-light);
-  }
-
   /* --- RESPONSIVE --- */
   @media (max-width: 1400px) {
     .chart-grid { grid-template-columns: 1fr; }
@@ -1358,13 +1345,11 @@ const adminStyles = `
 
   @media (max-width: 1024px) {
     .admin-layout { grid-template-columns: 1fr; }
-    .admin-sidebar { grid-column: 1; flex-direction: row; overflow-x: auto; padding: 1.5rem; }
+    .admin-sidebar { flex-direction: row; overflow-x: auto; padding: 1rem; }
     .admin-brand { margin-bottom: 0; }
-    .admin-nav { flex-direction: row; width: auto; }
+    .admin-nav { flex-direction: row; }
     .sidebar-section-label { display: none; }
     .admin-logout { margin-top: 0; width: auto; }
-    .topbar-search { width: 200px; }
-    .user-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
   }
 
   @media (max-width: 768px) {
@@ -1377,22 +1362,21 @@ const adminStyles = `
     .admin-login-container { grid-template-columns: 1fr; }
     .admin-login-welcome { display: none; }
     .admin-modal { max-height: 95vh; }
-    .admin-modal-header { flex-direction: column; }
   }
 `;
 
 // SVG Line Chart Component
-const CustomLineChart = ({ data, height = 180 }) => {
+const CustomLineChart = ({ data = [] }) => {
   if (!data || data.length === 0) {
     return (
       <div className="empty-state">
         <div className="empty-state-icon">📊</div>
-        <div className="empty-state-text">No activity data</div>
+        <div className="empty-state-text">No data available</div>
       </div>
     );
   }
 
-  const svgHeight = height;
+  const svgHeight = 160;
   const svgWidth = 800;
   const paddingX = 50;
   const paddingY = 30;
@@ -1401,7 +1385,7 @@ const CustomLineChart = ({ data, height = 180 }) => {
 
   const maxVal = Math.max(...data.map(d => d.count || 0), 5);
   const points = data.map((d, i) => {
-    const x = paddingX + (i / (data.length - 1)) * effectiveWidth;
+    const x = paddingX + (i / Math.max(data.length - 1, 1)) * effectiveWidth;
     const y = paddingY + effectiveHeight - ((d.count / maxVal) * effectiveHeight);
     return {
       x,
@@ -1418,12 +1402,11 @@ const CustomLineChart = ({ data, height = 180 }) => {
     <svg viewBox={`0 0 ${svgWidth} ${svgHeight + 40}`} className="svg-chart">
       <defs>
         <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--admin-accent)" stopOpacity="0.6" />
-          <stop offset="100%" stopColor="var(--admin-accent)" stopOpacity="0" />
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.6" />
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
         </linearGradient>
       </defs>
 
-      {/* Grid */}
       {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
         <line
           key={`grid-${i}`}
@@ -1435,13 +1418,11 @@ const CustomLineChart = ({ data, height = 180 }) => {
         />
       ))}
 
-      {/* Area & Line */}
       <path d={areaD} className="svg-area" />
       <path d={pathD} className="svg-line" />
 
-      {/* Points */}
       {points.map((p, i) => (
-        <g key={i}>
+        <g key={`point-${i}`}>
           <circle cx={p.x} cy={p.y} r="4" className="svg-point">
             <title>{p.val} activities</title>
           </circle>
@@ -1449,7 +1430,7 @@ const CustomLineChart = ({ data, height = 180 }) => {
             {p.dateLabel}
           </text>
           {p.val > 0 && (
-            <text x={p.x} y={p.y - 16} className="svg-text" style={{ fill: 'var(--admin-accent)', fontWeight: '700' }}>
+            <text x={p.x} y={p.y - 16} className="svg-text" style={{ fill: 'var(--accent)', fontWeight: '700' }}>
               {p.val}
             </text>
           )}
@@ -1459,7 +1440,7 @@ const CustomLineChart = ({ data, height = 180 }) => {
   );
 };
 
-// Stats Card Component
+// StatCard Component
 const StatCard = ({ icon: Icon, label, value, change, color = 'gold' }) => (
   <div className="stat-card">
     <div className={`stat-icon ${color}`}>
@@ -1471,19 +1452,19 @@ const StatCard = ({ icon: Icon, label, value, change, color = 'gold' }) => (
       {change !== undefined && (
         <div className={`stat-change ${change >= 0 ? 'positive' : 'negative'}`}>
           {change >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-          {Math.abs(change)}% from yesterday
+          {Math.abs(change)}% vs yesterday
         </div>
       )}
     </div>
   </div>
 );
 
-// Feature/Interaction List Component
-const FeatureList = ({ title, icon: Icon, items, emptyMessage = 'No data available' }) => (
+// FeatureList Component
+const FeatureList = ({ title, icon: Icon, items = [] }) => (
   <div className="admin-panel">
     <div className="panel-header">
       <h3 className="panel-title">
-        <Icon size={20} color="var(--admin-accent)" />
+        <Icon size={20} color="var(--accent)" />
         {title}
       </h3>
       <div className="panel-actions">
@@ -1494,7 +1475,7 @@ const FeatureList = ({ title, icon: Icon, items, emptyMessage = 'No data availab
     </div>
     {items.length === 0 ? (
       <div className="empty-state">
-        <div className="empty-state-subtext">{emptyMessage}</div>
+        <div className="empty-state-subtext">No data available</div>
       </div>
     ) : (
       <div className="list-container">
@@ -1503,11 +1484,9 @@ const FeatureList = ({ title, icon: Icon, items, emptyMessage = 'No data availab
           <span>Count</span>
         </div>
         {items.map((item, idx) => (
-          <div key={idx} className="list-row">
-            <div className="list-name">{item.name}</div>
-            <div className="list-badge" style={{ textAlign: 'center' }}>
-              {item.count.toLocaleString()}
-            </div>
+          <div key={`item-${idx}`} className="list-row">
+            <div className="list-name">{item.name || 'Unknown'}</div>
+            <div className="list-badge">{(item.count || 0).toLocaleString()}</div>
           </div>
         ))}
       </div>
@@ -1542,6 +1521,7 @@ function AdminPortal() {
     try {
       const res = await axios.post(`${API_BASE_URL}/api/admin/data`, { password });
       setAuthData(res.data);
+      setPassword('');
     } catch (err) {
       setError('Invalid password or access denied. Please try again.');
     } finally {
@@ -1564,10 +1544,7 @@ function AdminPortal() {
         d.setDate(d.getDate() - i);
         const iso = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
         const found = rawActivity.find(a => a._id === iso);
-        sevenDaysActivity.push({
-          date: iso,
-          count: found ? found.count : 0
-        });
+        sevenDaysActivity.push({ date: iso, count: found ? found.count : 0 });
       }
 
       const events = res.data.recentEventsRaw || [];
@@ -1606,6 +1583,17 @@ function AdminPortal() {
 
   const formatNum = (num) => (num ? num.toLocaleString('en-US') : '0');
 
+  // Filter users - Fixed to avoid dependency issues
+  const filteredUsers = authData?.users
+    ?.filter(u =>
+      (u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.email.toLowerCase().includes(searchQuery.toLowerCase())) &&
+      (filterActive === 'all' || (filterActive === 'online' && timeAgo(u.lastActive) === 'Just now'))
+    ) || [];
+
+  const dayName = currentTime.toLocaleDateString('en-US', { weekday: 'long' });
+  const monthDay = currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
   if (!authData) {
     return (
       <div className="admin-wrapper admin-login-screen">
@@ -1617,25 +1605,25 @@ function AdminPortal() {
             <div className="feature-list">
               <div className="feature-item">
                 <div className="feature-icon">
-                  <BarChart3 size={18} color="var(--admin-accent)" />
+                  <BarChart3 size={18} />
                 </div>
                 <span>Real-time analytics dashboard</span>
               </div>
               <div className="feature-item">
                 <div className="feature-icon">
-                  <Users size={18} color="var(--admin-accent)" />
+                  <Users size={18} />
                 </div>
                 <span>Complete user management</span>
               </div>
               <div className="feature-item">
                 <div className="feature-icon">
-                  <Activity size={18} color="var(--admin-accent)" />
+                  <Activity size={18} />
                 </div>
                 <span>Advanced activity tracking</span>
               </div>
               <div className="feature-item">
                 <div className="feature-icon">
-                  <Lock size={18} color="var(--admin-accent)" />
+                  <Lock size={18} />
                 </div>
                 <span>Secure encrypted access</span>
               </div>
@@ -1644,8 +1632,8 @@ function AdminPortal() {
 
           <div className="admin-login-card">
             <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'inline-flex', background: 'var(--admin-accent-light)', padding: '1rem', borderRadius: '18px' }}>
-                <Hexagon size={44} color="var(--admin-accent)" />
+              <div style={{ display: 'inline-flex', background: 'var(--accent-light)', padding: '1rem', borderRadius: '18px' }}>
+                <Hexagon size={44} color="var(--accent)" />
               </div>
             </div>
             <h2>Admin Access</h2>
@@ -1678,8 +1666,8 @@ function AdminPortal() {
             </form>
             {error && (
               <div style={{
-                color: 'var(--admin-danger)',
-                background: 'var(--admin-danger-light)',
+                color: 'var(--danger)',
+                background: 'var(--danger-light)',
                 padding: '12px',
                 borderRadius: '10px',
                 marginTop: '1.5rem',
@@ -1699,20 +1687,14 @@ function AdminPortal() {
     );
   }
 
-  const { analytics, users, feedbacks } = authData;
-  const maxDau = analytics.dau.length > 0 ? Math.max(...analytics.dau.map(d => d.count)) : 1;
-  const maxTraffic = analytics.traffic.length > 0 ? Math.max(...analytics.traffic.map(d => d.hits)) : 1;
+  const { analytics = {}, users = [], feedbacks = [] } = authData;
+  const dau = analytics.dau || [];
+  const traffic = analytics.traffic || [];
+  const features = analytics.features || [];
+  const interactions = analytics.interactions || [];
 
-  const filteredUsers = useMemo(() => {
-    return users.filter(u =>
-      (u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        u.email.toLowerCase().includes(searchQuery.toLowerCase())) &&
-      (filterActive === 'all' || (filterActive === 'online' && timeAgo(u.lastActive) === 'Just now'))
-    );
-  }, [searchQuery, filterActive, users]);
-
-  const dayName = currentTime.toLocaleDateString('en-US', { weekday: 'long' });
-  const monthDay = currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const maxDau = dau.length > 0 ? Math.max(...dau.map(d => d.count || 0)) : 1;
+  const maxTraffic = traffic.length > 0 ? Math.max(...traffic.map(d => d.hits || 0)) : 1;
 
   return (
     <div className="admin-wrapper admin-layout">
@@ -1724,8 +1706,8 @@ function AdminPortal() {
           <div className="admin-modal" onClick={e => e.stopPropagation()}>
             {loadingDetails ? (
               <div style={{ padding: '4rem', textAlign: 'center' }}>
-                <Loader2 size={48} color="var(--admin-accent)" className="lucide-spin" style={{ margin: '0 auto', marginBottom: '1rem' }} />
-                <h3 style={{ marginTop: 0, color: 'var(--admin-primary)' }}>Loading Profile...</h3>
+                <Loader2 size={48} color="var(--accent)" className="lucide-spin" style={{ margin: '0 auto', marginBottom: '1rem' }} />
+                <h3 style={{ marginTop: 0, color: 'var(--text-main)' }}>Loading Profile...</h3>
               </div>
             ) : userDetailsData ? (
               <>
@@ -1740,7 +1722,7 @@ function AdminPortal() {
                       <div className="modal-user-meta">
                         <span><Mail size={14} /> {userDetailsData.user.email}</span>
                         <span><Badge size={14} /> Section {userDetailsData.user.defaultSection}</span>
-                        <span style={{ color: userDetailsData.user.oltUsername ? 'var(--admin-success)' : 'var(--admin-danger)' }}>
+                        <span style={{ color: userDetailsData.user.oltUsername ? 'var(--success)' : 'var(--danger)' }}>
                           <Radio size={14} /> {userDetailsData.user.oltUsername ? 'OLT Linked' : 'No OLT'}
                         </span>
                       </div>
@@ -1754,17 +1736,17 @@ function AdminPortal() {
                 <div className="admin-modal-body">
                   <div className="modal-section">
                     <h3 className="modal-section-title">
-                      <TrendingUp size={20} color="var(--admin-accent)" />
+                      <TrendingUp size={20} color="var(--accent)" />
                       7-Day Activity Pattern
                     </h3>
                     <div className="svg-chart-container">
-                      <CustomLineChart data={userDetailsData.activityPattern} height={160} />
+                      <CustomLineChart data={userDetailsData.activityPattern} />
                     </div>
                   </div>
 
                   <div className="modal-section">
                     <h3 className="modal-section-title">
-                      <Clock size={20} color="var(--admin-accent)" />
+                      <Clock size={20} color="var(--accent)" />
                       Session History
                     </h3>
                     {Object.keys(userDetailsData.groupedEvents).length === 0 ? (
@@ -1781,7 +1763,7 @@ function AdminPortal() {
                               {dateLabel}
                             </div>
                             {events.map((ev, idx) => (
-                              <div key={idx} className={`timeline-item ${ev.eventName === 'login' || ev.eventName === 'app_opened' ? 'open-event' : ''}`}>
+                              <div key={`${dateLabel}-${idx}`} className={`timeline-item ${ev.eventName === 'login' || ev.eventName === 'app_opened' ? 'open-event' : ''}`}>
                                 <div className="timeline-content">
                                   <div className="timeline-time">
                                     <Clock size={12} />
@@ -1801,7 +1783,7 @@ function AdminPortal() {
                 </div>
               </>
             ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--admin-danger)' }}>
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--danger)' }}>
                 Failed to load user details
               </div>
             )}
@@ -1867,12 +1849,12 @@ function AdminPortal() {
         <div className="admin-topbar">
           <div className="topbar-left">
             <div>
-              <h2 style={{ margin: '0 0 4px 0', fontSize: '1.3rem', color: 'var(--admin-primary)' }}>
+              <h2 style={{ margin: '0 0 4px 0', fontSize: '1.3rem', color: 'var(--text-main)', fontWeight: 700 }}>
                 {adminTab === 'overview' && 'Platform Overview'}
                 {adminTab === 'users' && 'User Management'}
                 {adminTab === 'analytics' && 'Detailed Analytics'}
               </h2>
-              <p style={{ margin: 0, color: 'var(--admin-text-muted)', fontSize: '0.85rem', fontWeight: 500 }}>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 500 }}>
                 {dayName}, {monthDay}
               </p>
             </div>
@@ -1916,14 +1898,14 @@ function AdminPortal() {
                 <StatCard
                   icon={Activity}
                   label="Active Today"
-                  value={formatNum(analytics.dau.slice(-1)[0]?.count || 0)}
+                  value={formatNum(dau[dau.length - 1]?.count || 0)}
                   change={8}
                   color="blue"
                 />
                 <StatCard
                   icon={Globe}
                   label="API Requests (24h)"
-                  value={formatNum(analytics.traffic.slice(-1)[0]?.hits || 0)}
+                  value={formatNum(traffic[traffic.length - 1]?.hits || 0)}
                   change={-5}
                   color="green"
                 />
@@ -1942,7 +1924,7 @@ function AdminPortal() {
                 />
                 <StatCard
                   icon={Zap}
-                  label="Avg Response Time"
+                  label="Avg Response"
                   value="124ms"
                   color="danger"
                 />
@@ -1953,7 +1935,7 @@ function AdminPortal() {
                 <div className="admin-panel">
                   <div className="panel-header">
                     <h3 className="panel-title">
-                      <TrendingUp size={20} color="var(--admin-accent)" />
+                      <TrendingUp size={20} color="var(--accent)" />
                       Daily Active Users
                     </h3>
                     <div className="panel-actions">
@@ -1963,13 +1945,13 @@ function AdminPortal() {
                     </div>
                   </div>
                   <div className="css-chart-wrapper">
-                    {analytics.dau.length === 0 ? (
+                    {dau.length === 0 ? (
                       <div className="empty-state">No data</div>
                     ) : (
-                      analytics.dau.map((d, i) => {
+                      dau.map((d, i) => {
                         const heightPct = Math.max((d.count / maxDau) * 100, 5);
                         return (
-                          <div className="css-chart-bar-container" key={i}>
+                          <div className="css-chart-bar-container" key={`dau-${i}`}>
                             <div
                               className="css-chart-bar gold"
                               style={{ height: `${heightPct}%` }}
@@ -1986,7 +1968,7 @@ function AdminPortal() {
                 <div className="admin-panel">
                   <div className="panel-header">
                     <h3 className="panel-title">
-                      <Globe size={20} color="var(--admin-info)" />
+                      <Globe size={20} color="var(--info)" />
                       Server Traffic
                     </h3>
                     <div className="panel-actions">
@@ -1996,13 +1978,13 @@ function AdminPortal() {
                     </div>
                   </div>
                   <div className="css-chart-wrapper">
-                    {analytics.traffic.length === 0 ? (
+                    {traffic.length === 0 ? (
                       <div className="empty-state">No data</div>
                     ) : (
-                      analytics.traffic.map((d, i) => {
+                      traffic.map((d, i) => {
                         const heightPct = Math.max((d.hits / maxTraffic) * 100, 5);
                         return (
-                          <div className="css-chart-bar-container" key={i}>
+                          <div className="css-chart-bar-container" key={`traffic-${i}`}>
                             <div
                               className="css-chart-bar green"
                               style={{ height: `${heightPct}%` }}
@@ -2022,17 +2004,17 @@ function AdminPortal() {
                 <FeatureList
                   title="Popular Features"
                   icon={MousePointer2}
-                  items={analytics.features.map(f => ({
-                    name: f._id.replace('tab_', '').toUpperCase(),
-                    count: f.clicks
+                  items={features.map(f => ({
+                    name: f._id?.replace('tab_', '').toUpperCase() || 'Unknown',
+                    count: f.clicks || 0
                   }))}
                 />
                 <FeatureList
                   title="Top Button Clicks"
                   icon={Zap}
-                  items={analytics.interactions.map(f => ({
-                    name: f._id.replace(/_/g, ' '),
-                    count: f.count
+                  items={interactions.map(f => ({
+                    name: f._id?.replace(/_/g, ' ') || 'Unknown',
+                    count: f.count || 0
                   }))}
                 />
               </div>
@@ -2108,12 +2090,12 @@ function AdminPortal() {
                     })}
                   </div>
 
-                  {/* FEEDBACK SECTION */}
+                  {/* FEEDBACK */}
                   <div style={{ marginTop: '3rem' }}>
                     <div className="admin-panel">
                       <div className="panel-header">
                         <h3 className="panel-title">
-                          <MessageSquare size={20} color="var(--admin-accent)" />
+                          <MessageSquare size={20} color="var(--accent)" />
                           Recent Feedback ({feedbacks.length})
                         </h3>
                       </div>
@@ -2124,8 +2106,8 @@ function AdminPortal() {
                         </div>
                       ) : (
                         <div className="feedback-list">
-                          {feedbacks.slice(0, 5).map(f => (
-                            <div key={f._id} className="feedback-card">
+                          {feedbacks.slice(0, 5).map((f, idx) => (
+                            <div key={`feedback-${idx}`} className="feedback-card">
                               <div className="fb-header">
                                 <span className="fb-name">{f.userName}</span>
                                 <span className="fb-date">
@@ -2133,18 +2115,6 @@ function AdminPortal() {
                                 </span>
                               </div>
                               <p className="fb-msg">"{f.message}"</p>
-                              {f.rating && (
-                                <div className="fb-rating">
-                                  {[...Array(5)].map((_, i) => (
-                                    <Star
-                                      key={i}
-                                      size={14}
-                                      fill={i < f.rating ? 'var(--admin-warning)' : 'transparent'}
-                                      color={i < f.rating ? 'var(--admin-warning)' : 'var(--admin-border)'}
-                                    />
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           ))}
                         </div>
@@ -2161,12 +2131,12 @@ function AdminPortal() {
               <div className="admin-panel">
                 <div className="panel-header">
                   <h3 className="panel-title">
-                    <LineChart size={20} color="var(--admin-accent)" />
+                    <LineChart size={20} color="var(--accent)" />
                     Detailed Activity Timeline
                   </h3>
                 </div>
                 <div className="svg-chart-container">
-                  <CustomLineChart data={analytics.dau} />
+                  <CustomLineChart data={dau} />
                 </div>
               </div>
 
@@ -2174,17 +2144,17 @@ function AdminPortal() {
                 <FeatureList
                   title="All Features"
                   icon={BarChart3}
-                  items={analytics.features.map(f => ({
-                    name: f._id.replace('tab_', ''),
-                    count: f.clicks
+                  items={features.map(f => ({
+                    name: f._id?.replace('tab_', '') || 'Unknown',
+                    count: f.clicks || 0
                   }))}
                 />
                 <FeatureList
                   title="User Interactions"
                   icon={MousePointer2}
-                  items={analytics.interactions.map(f => ({
-                    name: f._id.replace(/_/g, ' '),
-                    count: f.count
+                  items={interactions.map(f => ({
+                    name: f._id?.replace(/_/g, ' ') || 'Unknown',
+                    count: f.count || 0
                   }))}
                 />
               </div>
