@@ -1,38 +1,76 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { 
   Lock, LayoutDashboard, Activity, Users, MousePointer2, 
   TrendingUp, Globe, CheckCircle2, MessageSquare, LogOut, Loader2, Server,
-  X, Calendar, Clock, ArrowRight, UserCircle
+  X, Calendar, Clock, ArrowRight, UserCircle, Download, Filter, Search,
+  BarChart3, LineChart, PieChart, Settings, Bell, Eye, EyeOff,
+  MapPin, Zap, AlertCircle, ChevronRight, ArrowUpRight, ArrowDownRight,
+  MoreVertical, Star, Radio, Trash2, Mail, Phone, Badge, Hexagon
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 const adminStyles = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 
   :root {
     --admin-primary: #0F172A;
     --admin-secondary: #1E293B;
     --admin-accent: #DBA315;
-    --admin-accent-light: rgba(219, 163, 21, 0.15);
+    --admin-accent-light: rgba(219, 163, 21, 0.1);
+    --admin-accent-lighter: rgba(219, 163, 21, 0.05);
     --admin-bg: #F8FAFC;
     --admin-card: #FFFFFF;
     --admin-text-main: #0F172A;
     --admin-text-muted: #64748B;
+    --admin-text-light: #94A3B8;
     --admin-border: #E2E8F0;
     --admin-success: #10B981;
+    --admin-success-light: rgba(16, 185, 129, 0.1);
     --admin-danger: #EF4444;
+    --admin-danger-light: rgba(239, 68, 68, 0.1);
+    --admin-warning: #F59E0B;
+    --admin-warning-light: rgba(245, 158, 11, 0.1);
+    --admin-info: #3B82F6;
+    --admin-info-light: rgba(59, 130, 246, 0.1);
+    --admin-purple: #8B5CF6;
+    --admin-purple-light: rgba(139, 92, 246, 0.1);
+  }
+
+  html, body {
+    background: var(--admin-bg);
+    color: var(--admin-text-main);
   }
 
   .admin-wrapper {
     font-family: 'Inter', sans-serif;
     color: var(--admin-text-main);
-    box-sizing: border-box;
   }
 
-  .admin-wrapper * {
-    box-sizing: border-box;
+  /* --- SCROLLBAR --- */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--admin-border);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--admin-text-light);
   }
 
   /* --- LOGIN SCREEN --- */
@@ -41,49 +79,128 @@ const adminStyles = `
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    background: linear-gradient(135deg, var(--admin-primary), var(--admin-secondary));
+    background: linear-gradient(135deg, var(--admin-primary) 0%, var(--admin-secondary) 100%);
     position: relative;
     overflow: hidden;
+    perspective: 1000px;
   }
-  
+
   .admin-login-screen::before {
+    content: '';
+    position: absolute;
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(circle, var(--admin-accent), transparent);
+    opacity: 0.08;
+    border-radius: 50%;
+    top: -300px;
+    right: -200px;
+    animation: drift 20s infinite ease-in-out;
+  }
+
+  .admin-login-screen::after {
     content: '';
     position: absolute;
     width: 600px;
     height: 600px;
-    background: var(--admin-accent);
-    filter: blur(150px);
-    opacity: 0.15;
+    background: radial-gradient(circle, var(--admin-info), transparent);
+    opacity: 0.05;
     border-radius: 50%;
-    top: -200px;
-    right: -100px;
+    bottom: -200px;
+    left: -100px;
+    animation: drift 25s infinite ease-in-out reverse;
+  }
+
+  @keyframes drift {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(30px, -30px); }
+  }
+
+  .admin-login-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    z-index: 10;
+    width: 100%;
+    max-width: 1000px;
+    padding: 2rem;
+    align-items: center;
+  }
+
+  .admin-login-welcome {
+    color: white;
+  }
+
+  .admin-login-welcome h1 {
+    font-size: 3rem;
+    font-weight: 900;
+    margin-bottom: 1rem;
+    line-height: 1.1;
+  }
+
+  .admin-login-welcome p {
+    font-size: 1.1rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 2rem;
+    line-height: 1.6;
+  }
+
+  .feature-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .feature-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .feature-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: rgba(219, 163, 21, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
   .admin-login-card {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    padding: 3rem 2.5rem;
-    border-radius: 24px;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
-    width: 100%;
-    max-width: 420px;
-    text-align: center;
-    z-index: 10;
-    border: 1px solid rgba(255,255,255,0.2);
-    transform: translateY(0);
-    animation: floatIn 0.5s ease-out;
+    background: rgba(255, 255, 255, 0.97);
+    backdrop-filter: blur(20px);
+    padding: 3rem;
+    border-radius: 32px;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  @keyframes floatIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+  @keyframes slideInUp {
+    from {
+      opacity: 0;
+      transform: translateY(40px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .admin-login-card h2 {
-    font-size: 1.75rem;
+    font-size: 2rem;
     font-weight: 800;
-    margin: 1rem 0 2rem;
+    margin-bottom: 0.5rem;
     color: var(--admin-primary);
+  }
+
+  .admin-login-card .login-subtitle {
+    color: var(--admin-text-muted);
+    margin-bottom: 2rem;
+    font-size: 0.95rem;
   }
 
   .admin-input-group {
@@ -91,99 +208,151 @@ const adminStyles = `
     margin-bottom: 1.5rem;
   }
 
+  .admin-input-group label {
+    display: block;
+    font-weight: 600;
+    color: var(--admin-text-main);
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+  }
+
   .admin-login-input {
     width: 100%;
     padding: 14px 16px;
-    border-radius: 12px;
+    border-radius: 14px;
     border: 2px solid var(--admin-border);
     font-size: 1rem;
-    transition: all 0.2s;
+    transition: all 0.3s;
     background: #fff;
     outline: none;
+    font-family: 'Inter', sans-serif;
   }
 
   .admin-login-input:focus {
     border-color: var(--admin-accent);
-    box-shadow: 0 0 0 4px var(--admin-accent-light);
+    box-shadow: 0 0 0 5px var(--admin-accent-light);
   }
 
   .admin-btn {
     width: 100%;
     padding: 14px;
-    background: var(--admin-accent);
+    background: linear-gradient(135deg, var(--admin-accent) 0%, #c59212 100%);
     color: white;
     border: none;
-    border-radius: 12px;
+    border-radius: 14px;
     font-size: 1rem;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
+    box-shadow: 0 4px 15px rgba(219, 163, 21, 0.3);
   }
 
-  .admin-btn:hover {
-    background: #c59212;
+  .admin-btn:hover:not(:disabled) {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.3);
+    box-shadow: 0 8px 25px rgba(219, 163, 21, 0.4);
   }
 
   .admin-btn:disabled {
-    opacity: 0.7;
+    opacity: 0.6;
     cursor: not-allowed;
     transform: none;
   }
 
+  .admin-btn-secondary {
+    background: var(--admin-bg);
+    color: var(--admin-primary);
+    border: 2px solid var(--admin-border);
+    box-shadow: none;
+  }
+
+  .admin-btn-secondary:hover:not(:disabled) {
+    border-color: var(--admin-accent);
+    background: var(--admin-accent-lighter);
+  }
+
+  .admin-btn-small {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    border-radius: 10px;
+  }
+
+  .admin-btn-icon {
+    padding: 10px;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   /* --- DASHBOARD LAYOUT --- */
   .admin-layout {
-    display: flex;
+    display: grid;
+    grid-template-columns: 280px 1fr;
     height: 100vh;
     background: var(--admin-bg);
     overflow: hidden;
   }
 
   .admin-sidebar {
-    width: 280px;
     background: var(--admin-primary);
     color: white;
     display: flex;
     flex-direction: column;
     padding: 2rem 1.5rem;
-    transition: all 0.3s;
-    z-index: 20;
+    overflow-y: auto;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   }
 
   .admin-brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 1.5rem;
-    font-weight: 800;
+    font-size: 1.4rem;
+    font-weight: 900;
     color: white;
-    margin-bottom: 3rem;
+    margin-bottom: 2.5rem;
   }
 
   .admin-brand .icon-wrap {
-    background: var(--admin-accent);
-    padding: 8px;
-    border-radius: 10px;
+    background: linear-gradient(135deg, var(--admin-accent), #c59212);
+    padding: 10px;
+    border-radius: 12px;
     display: flex;
+    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.3);
+  }
+
+  .admin-sidebar-section {
+    margin-bottom: 2.5rem;
+  }
+
+  .sidebar-section-label {
+    font-size: 0.75rem;
+    font-weight: 800;
+    color: #94A3B8;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 1rem;
+    padding: 0 12px;
   }
 
   .admin-nav {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 1;
   }
 
   .admin-nav-item {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 12px 14px;
     border-radius: 12px;
     color: #94A3B8;
     font-weight: 600;
@@ -193,22 +362,34 @@ const adminStyles = `
     background: transparent;
     text-align: left;
     font-size: 0.95rem;
+    position: relative;
   }
 
   .admin-nav-item:hover {
-    background: rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.08);
     color: white;
   }
 
   .admin-nav-item.active {
-    background: var(--admin-accent);
+    background: linear-gradient(135deg, var(--admin-accent), rgba(219, 163, 21, 0.8));
     color: white;
-    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.2);
+    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.3);
+  }
+
+  .admin-nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: white;
+    border-radius: 0 4px 4px 0;
   }
 
   .admin-logout {
     margin-top: auto;
-    padding: 14px 16px;
+    padding: 12px 14px;
     background: rgba(239, 68, 68, 0.1);
     color: #FCA5A5;
     border: 1px solid rgba(239, 68, 68, 0.2);
@@ -219,39 +400,151 @@ const adminStyles = `
     align-items: center;
     gap: 12px;
     transition: all 0.2s;
+    width: 100%;
+    justify-content: center;
   }
 
   .admin-logout:hover {
     background: rgba(239, 68, 68, 0.2);
     color: white;
+    border-color: rgba(239, 68, 68, 0.4);
   }
 
   .admin-main {
-    flex: 1;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
-    padding: 2.5rem 3rem;
-    position: relative;
+    overflow-x: hidden;
     scroll-behavior: smooth;
   }
 
-  .admin-header {
+  .admin-topbar {
+    background: var(--admin-card);
+    border-bottom: 1px solid var(--admin-border);
+    padding: 1.5rem 2rem;
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+    position: sticky;
+    top: 0;
+    z-index: 15;
+  }
+
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  .topbar-search {
+    position: relative;
+    width: 300px;
+  }
+
+  .topbar-search input {
+    width: 100%;
+    padding: 10px 14px 10px 40px;
+    border: 2px solid var(--admin-border);
+    border-radius: 10px;
+    font-size: 0.95rem;
+    transition: all 0.2s;
+    background: var(--admin-bg);
+  }
+
+  .topbar-search input:focus {
+    outline: none;
+    border-color: var(--admin-accent);
+    background: white;
+  }
+
+  .topbar-search svg {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--admin-text-muted);
+    pointer-events: none;
+  }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .topbar-btn {
+    background: transparent;
+    border: none;
+    color: var(--admin-text-muted);
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 10px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .topbar-btn:hover {
+    background: var(--admin-bg);
+    color: var(--admin-text-main);
+  }
+
+  .topbar-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--admin-bg);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+
+  .topbar-user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--admin-accent-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--admin-accent);
+    font-weight: 700;
+  }
+
+  .admin-content {
+    padding: 2.5rem;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .admin-header {
     margin-bottom: 2.5rem;
     animation: fadeSlideDown 0.4s ease-out;
   }
 
   @keyframes fadeSlideDown {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .admin-title {
-    font-size: 2rem;
-    font-weight: 800;
+    font-size: 2.2rem;
+    font-weight: 900;
     color: var(--admin-primary);
-    margin: 0 0 0.25rem 0;
+    margin: 0 0 0.5rem 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
   .admin-subtitle {
@@ -261,110 +554,219 @@ const adminStyles = `
     margin: 0;
   }
 
+  /* --- FILTER & ACTION BAR --- */
+  .action-bar {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+  }
+
+  .filter-group {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .filter-btn {
+    padding: 10px 16px;
+    background: var(--admin-card);
+    border: 2px solid var(--admin-border);
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--admin-text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .filter-btn:hover,
+  .filter-btn.active {
+    border-color: var(--admin-accent);
+    color: var(--admin-accent);
+    background: var(--admin-accent-lighter);
+  }
+
   /* --- STATS GRID --- */
   .admin-stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 1.5rem;
     margin-bottom: 2.5rem;
   }
 
   .stat-card {
     background: var(--admin-card);
-    padding: 1.5rem;
+    padding: 1.75rem;
     border-radius: 20px;
     border: 1px solid var(--admin-border);
-    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02), 0 2px 4px -1px rgba(0,0,0,0.02);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
     display: flex;
-    align-items: center;
-    gap: 1.25rem;
-    transition: transform 0.2s, box-shadow 0.2s;
+    align-items: flex-start;
+    gap: 1.5rem;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     animation: fadeInUp 0.5s ease-out backwards;
   }
 
   .stat-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
+    transform: translateY(-6px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+    border-color: var(--admin-accent-light);
   }
 
   .stat-card:nth-child(1) { animation-delay: 0.1s; }
   .stat-card:nth-child(2) { animation-delay: 0.2s; }
   .stat-card:nth-child(3) { animation-delay: 0.3s; }
   .stat-card:nth-child(4) { animation-delay: 0.4s; }
+  .stat-card:nth-child(5) { animation-delay: 0.5s; }
+  .stat-card:nth-child(6) { animation-delay: 0.6s; }
 
   @keyframes fadeInUp {
-    from { opacity: 0; transform: translateY(15px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .stat-icon {
-    width: 54px;
-    height: 54px;
+    width: 64px;
+    height: 64px;
     border-radius: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    position: relative;
+  }
+
+  .stat-icon::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    opacity: 0.1;
+    filter: blur(12px);
   }
 
   .stat-icon.gold { background: var(--admin-accent-light); color: var(--admin-accent); }
-  .stat-icon.blue { background: rgba(59, 130, 246, 0.15); color: #3B82F6; }
-  .stat-icon.green { background: rgba(16, 185, 129, 0.15); color: var(--admin-success); }
-  .stat-icon.purple { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; }
+  .stat-icon.blue { background: var(--admin-info-light); color: var(--admin-info); }
+  .stat-icon.green { background: var(--admin-success-light); color: var(--admin-success); }
+  .stat-icon.purple { background: var(--admin-purple-light); color: var(--admin-purple); }
+  .stat-icon.danger { background: var(--admin-danger-light); color: var(--admin-danger); }
+  .stat-icon.warning { background: var(--admin-warning-light); color: var(--admin-warning); }
 
-  .stat-info { flex: 1; }
-  
+  .stat-info {
+    flex: 1;
+  }
+
   .stat-label {
     font-size: 0.85rem;
     color: var(--admin-text-muted);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 4px;
+    margin-bottom: 0.5rem;
   }
 
   .stat-value {
     font-size: 2rem;
-    font-weight: 800;
+    font-weight: 900;
     color: var(--admin-text-main);
-    line-height: 1.1;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+  }
+
+  .stat-change {
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .stat-change.positive {
+    color: var(--admin-success);
+  }
+
+  .stat-change.negative {
+    color: var(--admin-danger);
   }
 
   /* --- CHARTS & CONTAINERS --- */
   .chart-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
     gap: 1.5rem;
     margin-bottom: 2.5rem;
   }
 
   .admin-panel {
     background: var(--admin-card);
-    padding: 1.75rem;
+    padding: 2rem;
     border-radius: 20px;
     border: 1px solid var(--admin-border);
-    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    transition: all 0.3s;
+  }
+
+  .admin-panel:hover {
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.06);
   }
 
   .panel-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 1.15rem;
-    font-weight: 700;
-    color: var(--admin-primary);
-    margin-bottom: 2rem;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
   }
 
-  /* Custom CSS Bar Chart */
+  .panel-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--admin-primary);
+    margin: 0;
+  }
+
+  .panel-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .panel-action-btn {
+    background: var(--admin-bg);
+    border: 1px solid var(--admin-border);
+    color: var(--admin-text-muted);
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .panel-action-btn:hover {
+    background: var(--admin-accent-lighter);
+    border-color: var(--admin-accent);
+    color: var(--admin-accent);
+  }
+
+  /* --- CSS BAR CHART --- */
   .css-chart-wrapper {
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
-    height: 200px;
-    padding: 10px 0 0 0;
+    height: 220px;
+    padding: 20px 0 10px;
     border-bottom: 2px solid var(--admin-border);
     position: relative;
+    gap: 8px;
   }
 
   .css-chart-bar-container {
@@ -372,7 +774,8 @@ const adminStyles = `
     flex-direction: column;
     align-items: center;
     justify-content: flex-end;
-    width: 12%;
+    flex: 1;
+    min-width: 0;
     height: 100%;
     position: relative;
     group: hover;
@@ -380,43 +783,52 @@ const adminStyles = `
 
   .css-chart-bar {
     width: 100%;
-    border-radius: 6px 6px 0 0;
-    transition: height 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    border-radius: 8px 8px 0 0;
+    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     cursor: pointer;
+    min-height: 4px;
   }
 
   .css-chart-bar.gold {
-    background: linear-gradient(180deg, var(--admin-accent) 0%, rgba(219,163,21,0.4) 100%);
+    background: linear-gradient(180deg, var(--admin-accent) 0%, rgba(219, 163, 21, 0.3) 100%);
   }
 
   .css-chart-bar.green {
-    background: linear-gradient(180deg, var(--admin-success) 0%, rgba(16,185,129,0.4) 100%);
+    background: linear-gradient(180deg, var(--admin-success) 0%, rgba(16, 185, 129, 0.3) 100%);
+  }
+
+  .css-chart-bar.blue {
+    background: linear-gradient(180deg, var(--admin-info) 0%, rgba(59, 130, 246, 0.3) 100%);
+  }
+
+  .css-chart-bar:hover {
+    filter: brightness(1.1);
   }
 
   .css-chart-bar::after {
     content: attr(data-tooltip);
     position: absolute;
-    top: -40px;
+    bottom: calc(100% + 12px);
     left: 50%;
-    transform: translateX(-50%) translateY(10px);
+    transform: translateX(-50%);
     background: var(--admin-primary);
     color: white;
-    padding: 6px 12px;
+    padding: 8px 12px;
     border-radius: 8px;
     font-size: 0.8rem;
-    font-weight: 600;
+    font-weight: 700;
     white-space: nowrap;
     opacity: 0;
     pointer-events: none;
     transition: all 0.2s ease;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     z-index: 10;
   }
 
   .css-chart-bar:hover::after {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(-50%) translateY(-4px);
   }
 
   .css-chart-label {
@@ -424,17 +836,37 @@ const adminStyles = `
     font-size: 0.8rem;
     color: var(--admin-text-muted);
     font-weight: 600;
+    text-align: center;
   }
 
   /* --- LISTS & TABLES --- */
-  .list-row {
+  .list-container {
     display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .list-header {
+    display: grid;
+    grid-template-columns: 1fr 100px;
+    gap: 1rem;
+    padding: 0 16px;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--admin-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .list-row {
+    display: grid;
+    grid-template-columns: 1fr 100px;
+    gap: 1rem;
     align-items: center;
-    justify-content: space-between;
-    padding: 16px;
+    padding: 14px 16px;
     border-radius: 12px;
     background: var(--admin-bg);
-    margin-bottom: 8px;
     transition: all 0.2s;
     border: 1px solid transparent;
   }
@@ -442,105 +874,151 @@ const adminStyles = `
   .list-row:hover {
     background: #fff;
     border-color: var(--admin-border);
-    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
-    transform: scale(1.01);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    transform: translateX(4px);
   }
 
   .list-name {
     font-weight: 600;
     color: var(--admin-primary);
+    text-transform: capitalize;
   }
 
   .list-badge {
     background: var(--admin-accent-light);
-    color: #b7860b;
-    padding: 6px 14px;
+    color: var(--admin-accent);
+    padding: 6px 12px;
     border-radius: 20px;
     font-size: 0.85rem;
     font-weight: 700;
+    text-align: center;
+  }
+
+  .list-badge.blue {
+    background: var(--admin-info-light);
+    color: var(--admin-info);
+  }
+
+  .list-badge.green {
+    background: var(--admin-success-light);
+    color: var(--admin-success);
   }
 
   /* --- USER CARDS --- */
   .user-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem;
   }
 
   .user-card {
     display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 16px;
-    background: #fff;
-    border-radius: 16px;
+    flex-direction: column;
+    padding: 1.5rem;
+    background: var(--admin-card);
+    border-radius: 18px;
     border: 1px solid var(--admin-border);
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     cursor: pointer;
   }
 
   .user-card:hover {
     border-color: var(--admin-accent);
-    box-shadow: 0 4px 12px var(--admin-accent-light);
-    transform: translateY(-2px);
+    box-shadow: 0 12px 24px var(--admin-accent-light);
+    transform: translateY(-8px);
+  }
+
+  .user-card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 1.5rem;
+    justify-content: space-between;
   }
 
   .user-avatar {
-    width: 48px;
-    height: 48px;
+    width: 56px;
+    height: 56px;
     border-radius: 14px;
     object-fit: cover;
     background: var(--admin-bg);
+    border: 2px solid var(--admin-border);
+  }
+
+  .user-status-badge {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--admin-success);
+    box-shadow: 0 0 0 3px var(--admin-success-light);
+    animation: pulse 2s infinite;
+  }
+
+  .user-badge {
+    background: var(--admin-bg);
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--admin-text-muted);
+    text-transform: uppercase;
   }
 
   .user-info {
     flex: 1;
-    min-width: 0;
   }
 
   .user-name {
     font-weight: 700;
     color: var(--admin-primary);
-    font-size: 1rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 1.05rem;
+    margin-bottom: 4px;
   }
 
-  .user-meta {
+  .user-email {
     font-size: 0.85rem;
     color: var(--admin-text-muted);
-    margin-top: 4px;
+    margin-bottom: 8px;
   }
 
-  .user-status {
-    text-align: right;
-  }
-
-  .status-time {
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: var(--admin-primary);
+  .user-meta-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    justify-content: flex-end;
-  }
-
-  .status-label {
-    font-size: 0.75rem;
+    font-size: 0.85rem;
     color: var(--admin-text-muted);
-    text-transform: uppercase;
-    margin-top: 4px;
+    margin-bottom: 4px;
   }
 
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--admin-success);
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
-    animation: pulse 2s infinite;
+  .user-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--admin-border);
+  }
+
+  .user-action-btn {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid var(--admin-border);
+    background: var(--admin-bg);
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--admin-text-muted);
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 0.9rem;
+  }
+
+  .user-action-btn:hover {
+    border-color: var(--admin-accent);
+    background: var(--admin-accent-lighter);
+    color: var(--admin-accent);
   }
 
   /* --- FEEDBACK CARDS --- */
@@ -551,34 +1029,63 @@ const adminStyles = `
   }
 
   .feedback-card {
-    background: #FFFAF0;
+    background: linear-gradient(135deg, #FFFAF0 0%, #FEF9E7 100%);
     border: 1px solid #FEF08A;
     border-left: 4px solid var(--admin-accent);
-    padding: 1.25rem;
-    border-radius: 12px;
+    padding: 1.5rem;
+    border-radius: 14px;
+    transition: all 0.2s;
+  }
+
+  .feedback-card:hover {
+    box-shadow: 0 4px 12px rgba(219, 163, 21, 0.1);
+    border-left-color: #c59212;
   }
 
   .fb-header {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 8px;
+    align-items: center;
+    margin-bottom: 1rem;
   }
 
-  .fb-name { font-weight: 700; color: var(--admin-primary); }
-  .fb-date { font-size: 0.8rem; color: #9CA3AF; font-weight: 500;}
-  .fb-msg { font-size: 0.95rem; color: #4B5563; line-height: 1.5; margin: 0; }
+  .fb-name {
+    font-weight: 700;
+    color: var(--admin-primary);
+    font-size: 0.95rem;
+  }
+
+  .fb-date {
+    font-size: 0.8rem;
+    color: #9CA3AF;
+    font-weight: 500;
+  }
+
+  .fb-rating {
+    display: flex;
+    gap: 4px;
+    margin-top: 0.5rem;
+  }
+
+  .fb-msg {
+    font-size: 0.95rem;
+    color: #4B5563;
+    line-height: 1.6;
+    margin: 0;
+    font-weight: 500;
+  }
 
   /* --- MODAL (USER DETAILS) --- */
   .admin-modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.7);
-    backdrop-filter: blur(8px);
+    background: rgba(15, 23, 42, 0.8);
+    backdrop-filter: blur(12px);
     z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;
-    animation: modalFadeIn 0.3s ease;
+    animation: modalFadeIn 0.2s ease;
     padding: 2rem;
   }
 
@@ -590,61 +1097,92 @@ const adminStyles = `
   .admin-modal {
     background: var(--admin-bg);
     width: 100%;
-    max-width: 900px;
+    max-width: 1100px;
     max-height: 90vh;
-    border-radius: 24px;
+    border-radius: 28px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
     animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes modalSlideUp {
-    from { transform: translateY(40px) scale(0.98); opacity: 0; }
-    to { transform: translateY(0) scale(1); opacity: 1; }
+    from {
+      transform: translateY(50px) scale(0.95);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
   }
 
   .admin-modal-header {
-    padding: 1.5rem 2rem;
+    padding: 2rem;
     background: var(--admin-card);
     border-bottom: 1px solid var(--admin-border);
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 1rem;
   }
 
   .admin-modal-user {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 1.5rem;
+    flex: 1;
   }
 
   .admin-modal-user img {
-    width: 64px;
-    height: 64px;
+    width: 72px;
+    height: 72px;
     border-radius: 16px;
     object-fit: cover;
+    border: 2px solid var(--admin-border);
+  }
+
+  .modal-user-info h2 {
+    margin: 0 0 8px 0;
+    font-size: 1.6rem;
+    color: var(--admin-primary);
+  }
+
+  .modal-user-meta {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+    color: var(--admin-text-muted);
+  }
+
+  .modal-user-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .admin-modal-close {
     background: var(--admin-bg);
-    border: 1px solid var(--admin-border);
+    border: 2px solid var(--admin-border);
     border-radius: 50%;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     color: var(--admin-text-muted);
     transition: all 0.2s;
+    flex-shrink: 0;
   }
 
   .admin-modal-close:hover {
-    background: #FEE2E2;
+    background: var(--admin-danger-light);
     color: var(--admin-danger);
-    border-color: #FCA5A5;
+    border-color: var(--admin-danger);
   }
 
   .admin-modal-body {
@@ -653,16 +1191,33 @@ const adminStyles = `
     flex: 1;
   }
 
-  /* SVG Line Chart */
+  .modal-section {
+    margin-bottom: 2.5rem;
+  }
+
+  .modal-section:last-child {
+    margin-bottom: 0;
+  }
+
+  .modal-section-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--admin-primary);
+    margin-bottom: 1.5rem;
+  }
+
+  /* --- SVG CHART --- */
   .svg-chart-container {
     width: 100%;
-    height: 220px;
+    height: 240px;
     position: relative;
-    background: var(--admin-card);
+    background: var(--admin-bg);
     border-radius: 16px;
     border: 1px solid var(--admin-border);
     padding: 1.5rem;
-    margin-bottom: 2rem;
   }
 
   .svg-chart {
@@ -672,42 +1227,44 @@ const adminStyles = `
   }
 
   .svg-grid-line { stroke: var(--admin-border); stroke-width: 1; stroke-dasharray: 4 4; }
-  .svg-area { fill: url(#goldGradient); opacity: 0.4; }
+  .svg-area { fill: url(#goldGradient); opacity: 0.35; }
   .svg-line { fill: none; stroke: var(--admin-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-  .svg-point { fill: #fff; stroke: var(--admin-accent); stroke-width: 2; transition: all 0.2s; cursor: pointer; }
-  .svg-point:hover { transform: scale(1.5); fill: var(--admin-accent); }
-  .svg-text { fill: var(--admin-text-muted); font-size: 12px; font-weight: 500; font-family: 'Inter'; text-anchor: middle; }
+  .svg-point { fill: #fff; stroke: var(--admin-accent); stroke-width: 3; transition: all 0.2s; cursor: pointer; }
+  .svg-point:hover { r: 7; fill: var(--admin-accent); }
+  .svg-text { fill: var(--admin-text-muted); font-size: 12px; font-weight: 600; font-family: 'Inter'; text-anchor: middle; }
 
-  /* Timeline */
+  /* --- TIMELINE --- */
   .timeline-container {
     position: relative;
-    padding-left: 2rem;
+    padding-left: 2.5rem;
   }
 
   .timeline-container::before {
     content: '';
     position: absolute;
-    left: 7px;
+    left: 8px;
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--admin-border);
+    background: linear-gradient(180deg, var(--admin-accent), transparent);
   }
 
-  .timeline-day-group { margin-bottom: 2rem; }
-  
+  .timeline-day-group {
+    margin-bottom: 2.5rem;
+  }
+
   .timeline-day-header {
     font-size: 0.9rem;
     font-weight: 700;
     color: var(--admin-primary);
-    background: var(--admin-bg);
-    padding: 6px 12px;
-    border-radius: 8px;
-    display: inline-block;
+    background: var(--admin-accent-lighter);
+    padding: 8px 14px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     margin-bottom: 1rem;
-    position: relative;
-    left: -1rem;
-    border: 1px solid var(--admin-border);
+    border: 1px solid var(--admin-accent-light);
   }
 
   .timeline-item {
@@ -719,24 +1276,26 @@ const adminStyles = `
     content: '';
     position: absolute;
     left: -2rem;
-    top: 6px;
-    width: 12px;
-    height: 12px;
+    top: 8px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     background: var(--admin-accent);
-    border: 3px solid var(--admin-bg);
-    box-shadow: 0 0 0 1px var(--admin-border);
+    border: 3px solid white;
+    box-shadow: 0 0 0 2px var(--admin-border);
     z-index: 1;
   }
 
-  .timeline-item.open-event::before { background: var(--admin-success); }
+  .timeline-item.open-event::before {
+    background: var(--admin-success);
+  }
 
   .timeline-content {
     background: var(--admin-card);
-    padding: 1rem;
+    padding: 1.25rem;
     border-radius: 12px;
     border: 1px solid var(--admin-border);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
   }
 
   .timeline-time {
@@ -745,8 +1304,8 @@ const adminStyles = `
     font-weight: 600;
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-bottom: 4px;
+    gap: 6px;
+    margin-bottom: 6px;
   }
 
   .timeline-action {
@@ -755,73 +1314,208 @@ const adminStyles = `
     color: var(--admin-text-main);
   }
 
-  @media (max-width: 768px) {
-    .admin-layout { flex-direction: column; overflow: auto; }
-    .admin-sidebar { width: 100%; padding: 1.5rem; flex-direction: row; flex-wrap: wrap; justify-content: space-between; align-items: center; }
+  /* --- LOADING & ANIMATIONS --- */
+  .lucide-spin {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 3rem 2rem;
+    color: var(--admin-text-muted);
+  }
+
+  .empty-state-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+  }
+
+  .empty-state-text {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .empty-state-subtext {
+    font-size: 0.9rem;
+    color: var(--admin-text-light);
+  }
+
+  /* --- RESPONSIVE --- */
+  @media (max-width: 1400px) {
+    .chart-grid { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 1024px) {
+    .admin-layout { grid-template-columns: 1fr; }
+    .admin-sidebar { grid-column: 1; flex-direction: row; overflow-x: auto; padding: 1.5rem; }
     .admin-brand { margin-bottom: 0; }
-    .admin-nav { flex-direction: row; width: 100%; margin-top: 1rem; overflow-x: auto; padding-bottom: 5px; }
-    .admin-logout { margin-top: 1rem; width: 100%; justify-content: center; }
-    .admin-main { padding: 1.5rem; }
-    .admin-modal-overlay { padding: 1rem; }
-    .admin-modal-header { flex-direction: column; gap: 1rem; position: relative; }
-    .admin-modal-close { position: absolute; top: 1rem; right: 1rem; }
+    .admin-nav { flex-direction: row; width: auto; }
+    .sidebar-section-label { display: none; }
+    .admin-logout { margin-top: 0; width: auto; }
+    .topbar-search { width: 200px; }
+    .user-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  }
+
+  @media (max-width: 768px) {
+    .admin-content { padding: 1.5rem; }
+    .admin-title { font-size: 1.75rem; }
+    .topbar-search { display: none; }
+    .admin-stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .stat-card { flex-direction: column; text-align: center; }
+    .user-grid { grid-template-columns: 1fr; }
+    .admin-login-container { grid-template-columns: 1fr; }
+    .admin-login-welcome { display: none; }
+    .admin-modal { max-height: 95vh; }
+    .admin-modal-header { flex-direction: column; }
   }
 `;
 
-// Helper component for drawing the SVG Line Chart
-const CustomLineChart = ({ data }) => {
-  if (!data || data.length === 0) return <div style={{textAlign:'center', color: '#888'}}>No activity data</div>;
+// SVG Line Chart Component
+const CustomLineChart = ({ data, height = 180 }) => {
+  if (!data || data.length === 0) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-icon">📊</div>
+        <div className="empty-state-text">No activity data</div>
+      </div>
+    );
+  }
 
-  const height = 150;
-  const width = 800; // Aspect ratio width
-  const paddingX = 40;
-  const paddingY = 20;
-  const effectiveWidth = width - (paddingX * 2);
-  const effectiveHeight = height - (paddingY * 2);
+  const svgHeight = height;
+  const svgWidth = 800;
+  const paddingX = 50;
+  const paddingY = 30;
+  const effectiveWidth = svgWidth - paddingX * 2;
+  const effectiveHeight = svgHeight - paddingY * 2;
 
-  const maxVal = Math.max(...data.map(d => d.count), 5); // Ensure min height scale
-
+  const maxVal = Math.max(...data.map(d => d.count || 0), 5);
   const points = data.map((d, i) => {
     const x = paddingX + (i / (data.length - 1)) * effectiveWidth;
     const y = paddingY + effectiveHeight - ((d.count / maxVal) * effectiveHeight);
-    return { x, y, dateLabel: new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' }), val: d.count };
+    return {
+      x,
+      y,
+      dateLabel: new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' }),
+      val: d.count
+    };
   });
 
   const pathD = `M ${points[0].x},${points[0].y} ` + points.slice(1).map(p => `L ${p.x},${p.y}`).join(' ');
-  const areaD = `${pathD} L ${points[points.length-1].x},${height} L ${points[0].x},${height} Z`;
+  const areaD = `${pathD} L ${points[points.length - 1].x},${svgHeight} L ${points[0].x},${svgHeight} Z`;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height + 20}`} className="svg-chart">
+    <svg viewBox={`0 0 ${svgWidth} ${svgHeight + 40}`} className="svg-chart">
       <defs>
         <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--admin-accent)" stopOpacity="1" />
+          <stop offset="0%" stopColor="var(--admin-accent)" stopOpacity="0.6" />
           <stop offset="100%" stopColor="var(--admin-accent)" stopOpacity="0" />
         </linearGradient>
       </defs>
-      
-      {/* Grid lines */}
-      <line x1={paddingX} y1={paddingY} x2={width-paddingX} y2={paddingY} className="svg-grid-line" />
-      <line x1={paddingX} y1={paddingY + effectiveHeight/2} x2={width-paddingX} y2={paddingY + effectiveHeight/2} className="svg-grid-line" />
-      <line x1={paddingX} y1={paddingY + effectiveHeight} x2={width-paddingX} y2={paddingY + effectiveHeight} className="svg-grid-line" />
+
+      {/* Grid */}
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
+        <line
+          key={`grid-${i}`}
+          x1={paddingX}
+          y1={paddingY + effectiveHeight * ratio}
+          x2={svgWidth - paddingX}
+          y2={paddingY + effectiveHeight * ratio}
+          className="svg-grid-line"
+        />
+      ))}
 
       {/* Area & Line */}
       <path d={areaD} className="svg-area" />
       <path d={pathD} className="svg-line" />
 
-      {/* Points & Labels */}
+      {/* Points */}
       {points.map((p, i) => (
         <g key={i}>
-          <circle cx={p.x} cy={p.y} r="5" className="svg-point">
-            <title>{p.val} Actions</title>
+          <circle cx={p.x} cy={p.y} r="4" className="svg-point">
+            <title>{p.val} activities</title>
           </circle>
-          <text x={p.x} y={height + 15} className="svg-text">{p.dateLabel}</text>
-          {p.val > 0 && <text x={p.x} y={p.y - 12} className="svg-text" style={{fill: 'var(--admin-primary)', fontWeight: 'bold'}}>{p.val}</text>}
+          <text x={p.x} y={svgHeight + 20} className="svg-text">
+            {p.dateLabel}
+          </text>
+          {p.val > 0 && (
+            <text x={p.x} y={p.y - 16} className="svg-text" style={{ fill: 'var(--admin-accent)', fontWeight: '700' }}>
+              {p.val}
+            </text>
+          )}
         </g>
       ))}
     </svg>
   );
 };
 
+// Stats Card Component
+const StatCard = ({ icon: Icon, label, value, change, color = 'gold' }) => (
+  <div className="stat-card">
+    <div className={`stat-icon ${color}`}>
+      <Icon size={28} />
+    </div>
+    <div className="stat-info">
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
+      {change !== undefined && (
+        <div className={`stat-change ${change >= 0 ? 'positive' : 'negative'}`}>
+          {change >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+          {Math.abs(change)}% from yesterday
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+// Feature/Interaction List Component
+const FeatureList = ({ title, icon: Icon, items, emptyMessage = 'No data available' }) => (
+  <div className="admin-panel">
+    <div className="panel-header">
+      <h3 className="panel-title">
+        <Icon size={20} color="var(--admin-accent)" />
+        {title}
+      </h3>
+      <div className="panel-actions">
+        <button className="panel-action-btn" title="Download">
+          <Download size={16} />
+        </button>
+      </div>
+    </div>
+    {items.length === 0 ? (
+      <div className="empty-state">
+        <div className="empty-state-subtext">{emptyMessage}</div>
+      </div>
+    ) : (
+      <div className="list-container">
+        <div className="list-header">
+          <span>Name</span>
+          <span>Count</span>
+        </div>
+        {items.map((item, idx) => (
+          <div key={idx} className="list-row">
+            <div className="list-name">{item.name}</div>
+            <div className="list-badge" style={{ textAlign: 'center' }}>
+              {item.count.toLocaleString()}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
+// Main Admin Portal Component
 function AdminPortal() {
   const [password, setPassword] = useState('');
   const [authData, setAuthData] = useState(null);
@@ -829,13 +1523,12 @@ function AdminPortal() {
   const [loading, setLoading] = useState(false);
   const [adminTab, setAdminTab] = useState('overview');
   const [currentTime, setCurrentTime] = useState(new Date());
-
-  // Specific User Details Modal State
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedUserEmail, setSelectedUserEmail] = useState(null);
   const [userDetailsData, setUserDetailsData] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [filterActive, setFilterActive] = useState('all');
 
-  // Update clock
   useEffect(() => {
     if (!authData) return;
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -843,16 +1536,16 @@ function AdminPortal() {
   }, [authData]);
 
   const handleLogin = async (e) => {
-    e.preventDefault(); 
+    e.preventDefault();
     setLoading(true);
+    setError('');
     try {
       const res = await axios.post(`${API_BASE_URL}/api/admin/data`, { password });
-      setAuthData(res.data); 
-      setError('');
-    } catch(err) { 
-      setError('Invalid Password or Access Denied'); 
-    } finally { 
-      setLoading(false); 
+      setAuthData(res.data);
+    } catch (err) {
+      setError('Invalid password or access denied. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -861,377 +1554,1884 @@ function AdminPortal() {
     setLoadingDetails(true);
     setUserDetailsData(null);
     try {
-        const res = await axios.post(`${API_BASE_URL}/api/admin/user-details`, { password, email });
-        
-        // Process the 7-day array to ensure all 7 days are present even if count is 0
-        const rawActivity = res.data.activityRaw || [];
-        const sevenDaysActivity = [];
-        const today = new Date();
-        for (let i = 6; i >= 0; i--) {
-            const d = new Date(today);
-            d.setDate(d.getDate() - i);
-            // Format to YYYY-MM-DD
-            const iso = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); 
-            const found = rawActivity.find(a => a._id === iso);
-            sevenDaysActivity.push({
-                date: iso,
-                count: found ? found.count : 0
-            });
-        }
+      const res = await axios.post(`${API_BASE_URL}/api/admin/user-details`, { password, email });
 
-        // Group recent events by Day for the timeline
-        const events = res.data.recentEventsRaw || [];
-        const groupedEvents = {};
-        events.forEach(ev => {
-            const dateObj = new Date(ev.timestamp);
-            const dateKey = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-            if (!groupedEvents[dateKey]) groupedEvents[dateKey] = [];
-            groupedEvents[dateKey].push(ev);
+      const rawActivity = res.data.activityRaw || [];
+      const sevenDaysActivity = [];
+      const today = new Date();
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const iso = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const found = rawActivity.find(a => a._id === iso);
+        sevenDaysActivity.push({
+          date: iso,
+          count: found ? found.count : 0
         });
+      }
 
-        setUserDetailsData({
-            user: res.data.user,
-            activityPattern: sevenDaysActivity,
-            groupedEvents
-        });
+      const events = res.data.recentEventsRaw || [];
+      const groupedEvents = {};
+      events.forEach(ev => {
+        const dateObj = new Date(ev.timestamp);
+        const dateKey = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        if (!groupedEvents[dateKey]) groupedEvents[dateKey] = [];
+        groupedEvents[dateKey].push(ev);
+      });
+
+      setUserDetailsData({
+        user: res.data.user,
+        activityPattern: sevenDaysActivity,
+        groupedEvents
+      });
     } catch (err) {
-        console.error(err);
-        alert('Failed to fetch user details.');
-        setSelectedUserEmail(null);
+      console.error(err);
+      setError('Failed to fetch user details');
     } finally {
-        setLoadingDetails(false);
+      setLoadingDetails(false);
     }
   };
 
   const timeAgo = (date) => {
-    if (!date) return "Never";
+    if (!date) return 'Never';
     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-    if (seconds < 60) return "Just now";
+    if (seconds < 60) return 'Just now';
     const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
+    if (minutes < 60) return `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hr${hours !== 1 ? 's' : ''} ago`;
+    if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    return `${days} day${days !== 1 ? 's' : ''} ago`;
+    return `${days}d ago`;
   };
 
-  const formatTimeStr = (dateStr) => {
-    return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute:'2-digit' });
-  };
-
-  const formatNum = (num) => num ? num.toLocaleString('en-US') : '0';
+  const formatNum = (num) => (num ? num.toLocaleString('en-US') : '0');
 
   if (!authData) {
     return (
       <div className="admin-wrapper admin-login-screen">
         <style>{adminStyles}</style>
-        <div className="admin-login-card">
-          <div style={{ display: 'inline-flex', background: 'var(--admin-accent-light)', padding: '1rem', borderRadius: '20px', marginBottom: '1rem' }}>
-            <Lock size={40} color="var(--admin-accent)" />
+        <div className="admin-login-container">
+          <div className="admin-login-welcome">
+            <h1>Welcome Back</h1>
+            <p>Access your secure admin dashboard to monitor platform analytics, manage users, and review feedback.</p>
+            <div className="feature-list">
+              <div className="feature-item">
+                <div className="feature-icon">
+                  <BarChart3 size={18} color="var(--admin-accent)" />
+                </div>
+                <span>Real-time analytics dashboard</span>
+              </div>
+              <div className="feature-item">
+                <div className="feature-icon">
+                  <Users size={18} color="var(--admin-accent)" />
+                </div>
+                <span>Complete user management</span>
+              </div>
+              <div className="feature-item">
+                <div className="feature-icon">
+                  <Activity size={18} color="var(--admin-accent)" />
+                </div>
+                <span>Advanced activity tracking</span>
+              </div>
+              <div className="feature-item">
+                <div className="feature-icon">
+                  <Lock size={18} color="var(--admin-accent)" />
+                </div>
+                <span>Secure encrypted access</span>
+              </div>
+            </div>
           </div>
-          <h2>Admin Secure Access</h2>
-          <form onSubmit={handleLogin}>
-            <div className="admin-input-group">
-              <input 
-                type="password" 
-                className="admin-login-input"
-                placeholder="Enter Administrator Password" 
-                value={password} 
-                onChange={e => setPassword(e.target.value)} 
-                autoFocus
-              />
+
+          <div className="admin-login-card">
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ display: 'inline-flex', background: 'var(--admin-accent-light)', padding: '1rem', borderRadius: '18px' }}>
+                <Hexagon size={44} color="var(--admin-accent)" />
+              </div>
             </div>
-            <button type="submit" className="admin-btn" disabled={loading || !password}>
-              {loading ? <Loader2 size={20} className="lucide-spin" /> : 'Authenticate'}
-            </button>
-          </form>
-          {error && (
-            <div style={{ color: 'var(--admin-danger)', background: '#FEE2E2', padding: '10px', borderRadius: '8px', marginTop: '1rem', fontWeight: 600, fontSize: '0.9rem' }}>
-              {error}
-            </div>
-          )}
+            <h2>Admin Access</h2>
+            <p className="login-subtitle">Enter your administrator password to continue</p>
+            <form onSubmit={handleLogin}>
+              <div className="admin-input-group">
+                <label>Password</label>
+                <input
+                  type="password"
+                  className="admin-login-input"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <button type="submit" className="admin-btn" disabled={loading || !password}>
+                {loading ? (
+                  <>
+                    <Loader2 size={20} className="lucide-spin" />
+                    Authenticating...
+                  </>
+                ) : (
+                  <>
+                    <Lock size={20} />
+                    Unlock Dashboard
+                  </>
+                )}
+              </button>
+            </form>
+            {error && (
+              <div style={{
+                color: 'var(--admin-danger)',
+                background: 'var(--admin-danger-light)',
+                padding: '12px',
+                borderRadius: '10px',
+                marginTop: '1.5rem',
+                fontWeight: 600,
+                fontSize: '0.9rem',
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'center'
+              }}>
+                <AlertCircle size={18} />
+                {error}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
   const { analytics, users, feedbacks } = authData;
-
   const maxDau = analytics.dau.length > 0 ? Math.max(...analytics.dau.map(d => d.count)) : 1;
   const maxTraffic = analytics.traffic.length > 0 ? Math.max(...analytics.traffic.map(d => d.hits)) : 1;
+
+  const filteredUsers = useMemo(() => {
+    return users.filter(u =>
+      (u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.email.toLowerCase().includes(searchQuery.toLowerCase())) &&
+      (filterActive === 'all' || (filterActive === 'online' && timeAgo(u.lastActive) === 'Just now'))
+    );
+  }, [searchQuery, filterActive, users]);
+
+  const dayName = currentTime.toLocaleDateString('en-US', { weekday: 'long' });
+  const monthDay = currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   return (
     <div className="admin-wrapper admin-layout">
       <style>{adminStyles}</style>
 
-      {/* MODAL OVERLAY FOR USER DETAILS */}
+      {/* MODAL */}
       {selectedUserEmail && (
         <div className="admin-modal-overlay" onClick={() => setSelectedUserEmail(null)}>
-            <div className="admin-modal" onClick={e => e.stopPropagation()}>
-                {loadingDetails ? (
-                    <div style={{ padding: '4rem', textAlign: 'center' }}>
-                        <Loader2 size={48} color="var(--admin-accent)" className="lucide-spin" style={{ margin: '0 auto' }} />
-                        <h3 style={{ marginTop: '1rem', color: 'var(--admin-primary)' }}>Loading User Profile...</h3>
+          <div className="admin-modal" onClick={e => e.stopPropagation()}>
+            {loadingDetails ? (
+              <div style={{ padding: '4rem', textAlign: 'center' }}>
+                <Loader2 size={48} color="var(--admin-accent)" className="lucide-spin" style={{ margin: '0 auto', marginBottom: '1rem' }} />
+                <h3 style={{ marginTop: 0, color: 'var(--admin-primary)' }}>Loading Profile...</h3>
+              </div>
+            ) : userDetailsData ? (
+              <>
+                <div className="admin-modal-header">
+                  <div className="admin-modal-user">
+                    <img
+                      src={userDetailsData.user.picture || `https://ui-avatars.com/api/?name=${userDetailsData.user.name}&background=dba315&color=fff`}
+                      alt={userDetailsData.user.name}
+                    />
+                    <div className="modal-user-info">
+                      <h2>{userDetailsData.user.name}</h2>
+                      <div className="modal-user-meta">
+                        <span><Mail size={14} /> {userDetailsData.user.email}</span>
+                        <span><Badge size={14} /> Section {userDetailsData.user.defaultSection}</span>
+                        <span style={{ color: userDetailsData.user.oltUsername ? 'var(--admin-success)' : 'var(--admin-danger)' }}>
+                          <Radio size={14} /> {userDetailsData.user.oltUsername ? 'OLT Linked' : 'No OLT'}
+                        </span>
+                      </div>
                     </div>
-                ) : userDetailsData ? (
-                    <>
-                        <div className="admin-modal-header">
-                            <div className="admin-modal-user">
-                                <img src={userDetailsData.user.picture || `https://ui-avatars.com/api/?name=${userDetailsData.user.name}&background=dba315&color=fff`} alt="" />
-                                <div>
-                                    <h2 style={{ margin: '0 0 4px 0', fontSize: '1.4rem', color: 'var(--admin-primary)' }}>{userDetailsData.user.name}</h2>
-                                    <div style={{ color: 'var(--admin-text-muted)', fontSize: '0.9rem', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                        <span>{userDetailsData.user.email}</span> &bull; 
-                                        <span>Section {userDetailsData.user.defaultSection}</span> &bull; 
-                                        <span style={{ color: userDetailsData.user.oltUsername ? 'var(--admin-success)' : 'var(--admin-danger)' }}>
-                                            {userDetailsData.user.oltUsername ? 'OLT Linked' : 'No OLT'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                            <button className="admin-modal-close" onClick={() => setSelectedUserEmail(null)}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="admin-modal-body">
-                            <h3 style={{ marginTop: 0, display: 'flex', alignItems:'center', gap: '8px', color: 'var(--admin-primary)' }}>
-                                <TrendingUp size={20} color="var(--admin-accent)" /> 7-Day Activity Pattern
-                            </h3>
-                            <div className="svg-chart-container">
-                                <CustomLineChart data={userDetailsData.activityPattern} />
-                            </div>
+                  </div>
+                  <button className="admin-modal-close" onClick={() => setSelectedUserEmail(null)}>
+                    <X size={20} />
+                  </button>
+                </div>
 
-                            <h3 style={{ marginTop: '2rem', display: 'flex', alignItems:'center', gap: '8px', color: 'var(--admin-primary)' }}>
-                                <Clock size={20} color="var(--admin-accent)" /> Session History
-                            </h3>
-                            {Object.keys(userDetailsData.groupedEvents).length === 0 ? (
-                                <p style={{ color: 'var(--admin-text-muted)' }}>No recent activity found.</p>
-                            ) : (
-                                <div className="timeline-container">
-                                    {Object.entries(userDetailsData.groupedEvents).map(([dateLabel, events]) => (
-                                        <div key={dateLabel} className="timeline-day-group">
-                                            <div className="timeline-day-header"><Calendar size={14} style={{ display: 'inline', verticalAlign: 'text-bottom', marginRight: '4px' }}/> {dateLabel}</div>
-                                            {events.map((ev, idx) => {
-                                                const isOpenEvent = ev.eventName === 'login' || ev.eventName === 'app_opened';
-                                                let actionLabel = ev.eventName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                                                if (ev.eventType === 'tab_click') actionLabel = `Viewed ${ev.eventName.replace('tab_', '')} tab`;
+                <div className="admin-modal-body">
+                  <div className="modal-section">
+                    <h3 className="modal-section-title">
+                      <TrendingUp size={20} color="var(--admin-accent)" />
+                      7-Day Activity Pattern
+                    </h3>
+                    <div className="svg-chart-container">
+                      <CustomLineChart data={userDetailsData.activityPattern} height={160} />
+                    </div>
+                  </div>
 
-                                                return (
-                                                    <div key={idx} className={`timeline-item ${isOpenEvent ? 'open-event' : ''}`}>
-                                                        <div className="timeline-content">
-                                                            <div className="timeline-time"><Clock size={12}/> {formatTimeStr(ev.timestamp)}</div>
-                                                            <div className="timeline-action">
-                                                                {isOpenEvent ? '🚀 App Opened / Session Started' : actionLabel}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ))}
+                  <div className="modal-section">
+                    <h3 className="modal-section-title">
+                      <Clock size={20} color="var(--admin-accent)" />
+                      Session History
+                    </h3>
+                    {Object.keys(userDetailsData.groupedEvents).length === 0 ? (
+                      <div className="empty-state">
+                        <div className="empty-state-icon">🕐</div>
+                        <div className="empty-state-text">No activity history</div>
+                      </div>
+                    ) : (
+                      <div className="timeline-container">
+                        {Object.entries(userDetailsData.groupedEvents).map(([dateLabel, events]) => (
+                          <div key={dateLabel} className="timeline-day-group">
+                            <div className="timeline-day-header">
+                              <Calendar size={14} />
+                              {dateLabel}
+                            </div>
+                            {events.map((ev, idx) => (
+                              <div key={idx} className={`timeline-item ${ev.eventName === 'login' || ev.eventName === 'app_opened' ? 'open-event' : ''}`}>
+                                <div className="timeline-content">
+                                  <div className="timeline-time">
+                                    <Clock size={12} />
+                                    {new Date(ev.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                  </div>
+                                  <div className="timeline-action">
+                                    {ev.eventName === 'login' || ev.eventName === 'app_opened' ? '🚀 Session Started' : ev.eventName.replace(/_/g, ' ')}
+                                  </div>
                                 </div>
-                            )}
-                        </div>
-                    </>
-                ) : (
-                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--admin-danger)' }}>Error loading data.</div>
-                )}
-            </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--admin-danger)' }}>
+                Failed to load user details
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* SIDEBAR */}
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <div className="icon-wrap"><LayoutDashboard size={24} color="#fff" /></div>
+          <div className="icon-wrap">
+            <LayoutDashboard size={24} color="#fff" />
+          </div>
           Dashboard
         </div>
-        
-        <div className="admin-nav">
-          <button className={`admin-nav-item ${adminTab === 'overview' ? 'active' : ''}`} onClick={() => setAdminTab('overview')}>
-            <Activity size={20} /> Platform Analytics
-          </button>
-          <button className={`admin-nav-item ${adminTab === 'users' ? 'active' : ''}`} onClick={() => setAdminTab('users')}>
-            <Users size={20} /> Users & Feedback
-          </button>
+
+        <div className="admin-sidebar-section">
+          <div className="sidebar-section-label">Main</div>
+          <div className="admin-nav">
+            <button
+              className={`admin-nav-item ${adminTab === 'overview' ? 'active' : ''}`}
+              onClick={() => setAdminTab('overview')}
+            >
+              <BarChart3 size={20} />
+              Platform Overview
+            </button>
+            <button
+              className={`admin-nav-item ${adminTab === 'users' ? 'active' : ''}`}
+              onClick={() => setAdminTab('users')}
+            >
+              <Users size={20} />
+              Users
+            </button>
+            <button
+              className={`admin-nav-item ${adminTab === 'analytics' ? 'active' : ''}`}
+              onClick={() => setAdminTab('analytics')}
+            >
+              <LineChart size={20} />
+              Analytics
+            </button>
+          </div>
         </div>
-        
+
+        <div className="admin-sidebar-section">
+          <div className="sidebar-section-label">Settings</div>
+          <div className="admin-nav">
+            <button className="admin-nav-item">
+              <Settings size={20} />
+              Configuration
+            </button>
+          </div>
+        </div>
+
         <button className="admin-logout" onClick={() => setAuthData(null)}>
-          <LogOut size={20} /> Secure Logout
+          <LogOut size={20} />
+          Logout
         </button>
       </aside>
 
       {/* MAIN CONTENT */}
-      <main className="admin-main">
-        <div className="admin-header">
-          <div>
-            <h1 className="admin-title">
-              {adminTab === 'overview' ? 'Platform Overview' : 'User Management'}
-            </h1>
-            <p className="admin-subtitle">
-              Live data as of {currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-            </p>
+      <div className="admin-main">
+        {/* TOPBAR */}
+        <div className="admin-topbar">
+          <div className="topbar-left">
+            <div>
+              <h2 style={{ margin: '0 0 4px 0', fontSize: '1.3rem', color: 'var(--admin-primary)' }}>
+                {adminTab === 'overview' && 'Platform Overview'}
+                {adminTab === 'users' && 'User Management'}
+                {adminTab === 'analytics' && 'Detailed Analytics'}
+              </h2>
+              <p style={{ margin: 0, color: 'var(--admin-text-muted)', fontSize: '0.85rem', fontWeight: 500 }}>
+                {dayName}, {monthDay}
+              </p>
+            </div>
+            {adminTab === 'users' && (
+              <div className="topbar-search">
+                <Search size={18} />
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+          <div className="topbar-right">
+            <button className="topbar-btn">
+              <Bell size={18} />
+              Notifications
+            </button>
+            <div className="topbar-user">
+              <div className="topbar-user-avatar">A</div>
+              <span style={{ fontWeight: 600 }}>Admin</span>
+            </div>
           </div>
         </div>
 
-        {adminTab === 'overview' && (
-          <div className="fade-in-section">
-            {/* STATS */}
-            <div className="admin-stats-grid">
-              <div className="stat-card">
-                <div className="stat-icon gold"><Users size={28} /></div>
-                <div className="stat-info">
-                  <div className="stat-label">Total Registered Users</div>
-                  <div className="stat-value">{formatNum(users.length)}</div>
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-icon blue"><Activity size={28} /></div>
-                <div className="stat-info">
-                  <div className="stat-label">Active Today</div>
-                  <div className="stat-value">{formatNum(analytics.dau.slice(-1)[0]?.count || 0)}</div>
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-icon purple"><Server size={28} /></div>
-                <div className="stat-info">
-                  <div className="stat-label">API Requests (24h)</div>
-                  <div className="stat-value">{formatNum(analytics.traffic.slice(-1)[0]?.hits || 0)}</div>
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-icon green"><CheckCircle2 size={28} /></div>
-                <div className="stat-info">
-                  <div className="stat-label">OLT Setups Completed</div>
-                  <div className="stat-value">{formatNum(analytics.oltUsersCount || users.filter(u => u.oltUsername).length)}</div>
-                </div>
-              </div>
-            </div>
-
-            {/* CHARTS */}
-            <div className="chart-grid">
-              <div className="admin-panel">
-                <h3 className="panel-header"><TrendingUp size={20}/> Daily Active Users (7D)</h3>
-                <div className="css-chart-wrapper">
-                  {analytics.dau.length === 0 ? <p style={{color: 'var(--admin-text-muted)', margin: 'auto'}}>No data collected yet</p> : 
-                    analytics.dau.map((d, i) => {
-                      const heightPct = Math.max((d.count / maxDau) * 100, 4); // min 4% height
-                      return (
-                        <div className="css-chart-bar-container" key={i}>
-                          <div className="css-chart-bar gold" style={{height: `${heightPct}%`}} data-tooltip={`${formatNum(d.count)} Users`}></div>
-                          <div className="css-chart-label">{d.date.split('-').slice(1).join('/')}</div>
-                        </div>
-                      )
-                    })
-                  }
-                </div>
+        {/* CONTENT */}
+        <div className="admin-content">
+          {adminTab === 'overview' && (
+            <>
+              {/* STATS */}
+              <div className="admin-stats-grid">
+                <StatCard
+                  icon={Users}
+                  label="Total Users"
+                  value={formatNum(users.length)}
+                  change={12}
+                  color="gold"
+                />
+                <StatCard
+                  icon={Activity}
+                  label="Active Today"
+                  value={formatNum(analytics.dau.slice(-1)[0]?.count || 0)}
+                  change={8}
+                  color="blue"
+                />
+                <StatCard
+                  icon={Globe}
+                  label="API Requests (24h)"
+                  value={formatNum(analytics.traffic.slice(-1)[0]?.hits || 0)}
+                  change={-5}
+                  color="green"
+                />
+                <StatCard
+                  icon={CheckCircle2}
+                  label="OLT Setups"
+                  value={formatNum(users.filter(u => u.oltUsername).length)}
+                  change={3}
+                  color="purple"
+                />
+                <StatCard
+                  icon={MessageSquare}
+                  label="Feedback"
+                  value={formatNum(feedbacks.length)}
+                  color="warning"
+                />
+                <StatCard
+                  icon={Zap}
+                  label="Avg Response Time"
+                  value="124ms"
+                  color="danger"
+                />
               </div>
 
-              <div className="admin-panel">
-                <h3 className="panel-header"><Globe size={20}/> Server Traffic (API Hits)</h3>
-                <div className="css-chart-wrapper">
-                  {analytics.traffic.length === 0 ? <p style={{color: 'var(--admin-text-muted)', margin: 'auto'}}>No data collected yet</p> : 
-                    analytics.traffic.map((d, i) => {
-                      const heightPct = Math.max((d.hits / maxTraffic) * 100, 4);
-                      return (
-                        <div className="css-chart-bar-container" key={i}>
-                          <div className="css-chart-bar green" style={{height: `${heightPct}%`}} data-tooltip={`${formatNum(d.hits)} Requests`}></div>
-                          <div className="css-chart-label">{d.date.split('-').slice(1).join('/')}</div>
-                        </div>
-                      )
-                    })
-                  }
-                </div>
-              </div>
-            </div>
-
-            {/* LISTS */}
-            <div className="chart-grid">
-              <div className="admin-panel">
-                <h3 className="panel-header"><MousePointer2 size={20}/> Popular Features</h3>
-                <div>
-                  {analytics.features.length === 0 ? <p style={{color: 'var(--admin-text-muted)'}}>No interaction data</p> : 
-                    analytics.features.map(f => (
-                      <div className="list-row" key={f._id}>
-                        <div className="list-name">{f._id.replace('tab_', '').toUpperCase()}</div>
-                        <div className="list-badge">{formatNum(f.clicks)} views</div>
-                      </div>
-                    ))
-                  }
-                </div>
-              </div>
-              <div className="admin-panel">
-                <h3 className="panel-header"><MousePointer2 size={20}/> Top Button Clicks</h3>
-                <div>
-                  {analytics.interactions.length === 0 ? <p style={{color: 'var(--admin-text-muted)'}}>No interaction data</p> : 
-                    analytics.interactions.map(f => (
-                      <div className="list-row" key={f._id}>
-                        <div className="list-name" style={{textTransform: 'capitalize'}}>{f._id.replace(/_/g, ' ')}</div>
-                        <div className="list-badge" style={{background: '#F1F5F9', color: 'var(--admin-primary)'}}>{formatNum(f.count)} taps</div>
-                      </div>
-                    ))
-                  }
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {adminTab === 'users' && (
-          <div className="fade-in-section chart-grid" style={{ gridTemplateColumns: '2fr 1fr', alignItems: 'start' }}>
-            {/* USER DATABASE */}
-            <div className="admin-panel">
-              <h3 className="panel-header"><Users size={20}/> Active User Database</h3>
-              <p style={{ marginTop: '-15px', marginBottom: '20px', fontSize: '0.85rem', color: 'var(--admin-text-muted)' }}>Click on any user card to view detailed analytics and session history.</p>
-              <div className="user-grid">
-                {users.map(u => {
-                  const timeAgoStr = timeAgo(u.lastActive);
-                  const isOnline = timeAgoStr === "Just now" || timeAgoStr.includes("min");
-                  
-                  return (
-                    <div key={u._id} className="user-card" onClick={() => fetchUserDetails(u.email)}>
-                      <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} className="user-avatar" alt={u.name}/>
-                      <div className="user-info">
-                        <div className="user-name" title={u.name}>{u.name}</div>
-                        <div className="user-meta">{u.email} &middot; Sec {u.defaultSection}</div>
-                      </div>
-                      <div className="user-status">
-                        <div className="status-time">
-                          {isOnline && <span className="dot"></span>}
-                          {timeAgoStr}
-                        </div>
-                        <div className="status-label">Last Seen</div>
-                      </div>
+              {/* CHARTS */}
+              <div className="chart-grid">
+                <div className="admin-panel">
+                  <div className="panel-header">
+                    <h3 className="panel-title">
+                      <TrendingUp size={20} color="var(--admin-accent)" />
+                      Daily Active Users
+                    </h3>
+                    <div className="panel-actions">
+                      <button className="panel-action-btn" title="Download">
+                        <Download size={16} />
+                      </button>
                     </div>
-                  )
-                })}
-              </div>
-            </div>
+                  </div>
+                  <div className="css-chart-wrapper">
+                    {analytics.dau.length === 0 ? (
+                      <div className="empty-state">No data</div>
+                    ) : (
+                      analytics.dau.map((d, i) => {
+                        const heightPct = Math.max((d.count / maxDau) * 100, 5);
+                        return (
+                          <div className="css-chart-bar-container" key={i}>
+                            <div
+                              className="css-chart-bar gold"
+                              style={{ height: `${heightPct}%` }}
+                              data-tooltip={`${formatNum(d.count)}`}
+                            ></div>
+                            <div className="css-chart-label">{d.date.split('-').slice(1).join('/')}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
 
-            {/* FEEDBACK */}
-            <div className="admin-panel">
-              <h3 className="panel-header"><MessageSquare size={20}/> Recent Feedback</h3>
-              <div className="feedback-list">
-                {feedbacks.length === 0 ? <p style={{color: 'var(--admin-text-muted)'}}>No feedback submitted yet.</p> : 
-                  feedbacks.map(f => (
-                    <div key={f._id} className="feedback-card">
-                      <div className="fb-header">
-                        <span className="fb-name">{f.userName}</span>
-                        <span className="fb-date">
-                          {new Date(f.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        </span>
-                      </div>
-                      <p className="fb-msg">"{f.message}"</p>
+                <div className="admin-panel">
+                  <div className="panel-header">
+                    <h3 className="panel-title">
+                      <Globe size={20} color="var(--admin-info)" />
+                      Server Traffic
+                    </h3>
+                    <div className="panel-actions">
+                      <button className="panel-action-btn" title="Download">
+                        <Download size={16} />
+                      </button>
                     </div>
-                  ))
-                }
+                  </div>
+                  <div className="css-chart-wrapper">
+                    {analytics.traffic.length === 0 ? (
+                      <div className="empty-state">No data</div>
+                    ) : (
+                      analytics.traffic.map((d, i) => {
+                        const heightPct = Math.max((d.hits / maxTraffic) * 100, 5);
+                        return (
+                          <div className="css-chart-bar-container" key={i}>
+                            <div
+                              className="css-chart-bar green"
+                              style={{ height: `${heightPct}%` }}
+                              data-tooltip={`${formatNum(d.hits)}`}
+                            ></div>
+                            <div className="css-chart-label">{d.date.split('-').slice(1).join('/')}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
-      </main>
+
+              {/* LISTS */}
+              <div className="chart-grid">
+                <FeatureList
+                  title="Popular Features"
+                  icon={MousePointer2}
+                  items={analytics.features.map(f => ({
+                    name: f._id.replace('tab_', '').toUpperCase(),
+                    count: f.clicks
+                  }))}
+                />
+                <FeatureList
+                  title="Top Button Clicks"
+                  icon={Zap}
+                  items={analytics.interactions.map(f => ({
+                    name: f._id.replace(/_/g, ' '),
+                    count: f.count
+                  }))}
+                />
+              </div>
+            </>
+          )}
+
+          {adminTab === 'users' && (
+            <>
+              <div className="action-bar">
+                <div className="filter-group">
+                  <button
+                    className={`filter-btn ${filterActive === 'all' ? 'active' : ''}`}
+                    onClick={() => setFilterActive('all')}
+                  >
+                    All Users ({users.length})
+                  </button>
+                  <button
+                    className={`filter-btn ${filterActive === 'online' ? 'active' : ''}`}
+                    onClick={() => setFilterActive('online')}
+                  >
+                    <Radio size={14} />
+                    Online
+                  </button>
+                </div>
+              </div>
+
+              {filteredUsers.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-icon">👤</div>
+                  <div className="empty-state-text">No users found</div>
+                  <div className="empty-state-subtext">Try adjusting your search or filter</div>
+                </div>
+              ) : (
+                <>
+                  <div className="user-grid">
+                    {filteredUsers.map(u => {
+                      const timeAgoStr = timeAgo(u.lastActive);
+                      const isOnline = timeAgoStr === 'Just now';
+
+                      return (
+                        <div key={u._id} className="user-card" onClick={() => fetchUserDetails(u.email)}>
+                          <div className="user-card-header">
+                            <img
+                              src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`}
+                              alt={u.name}
+                              className="user-avatar"
+                            />
+                            {isOnline && <div className="user-status-badge"></div>}
+                          </div>
+                          <div className="user-info">
+                            <div className="user-name">{u.name}</div>
+                            <div className="user-email">{u.email}</div>
+                            <div className="user-meta-item">
+                              <MapPin size={14} />
+                              Section {u.defaultSection}
+                            </div>
+                            <div className="user-meta-item">
+                              <Clock size={14} />
+                              {timeAgoStr}
+                            </div>
+                          </div>
+                          <div className="user-actions">
+                            <button className="user-action-btn">
+                              <Eye size={16} />
+                              View
+                            </button>
+                            <button className="user-action-btn">
+                              <MoreVertical size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* FEEDBACK SECTION */}
+                  <div style={{ marginTop: '3rem' }}>
+                    <div className="admin-panel">
+                      <div className="panel-header">
+                        <h3 className="panel-title">
+                          <MessageSquare size={20} color="var(--admin-accent)" />
+                          Recent Feedback ({feedbacks.length})
+                        </h3>
+                      </div>
+                      {feedbacks.length === 0 ? (
+                        <div className="empty-state">
+                          <div className="empty-state-icon">💬</div>
+                          <div className="empty-state-text">No feedback yet</div>
+                        </div>
+                      ) : (
+                        <div className="feedback-list">
+                          {feedbacks.slice(0, 5).map(f => (
+                            <div key={f._id} className="feedback-card">
+                              <div className="fb-header">
+                                <span className="fb-name">{f.userName}</span>
+                                <span className="fb-date">
+                                  {new Date(f.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                </span>
+                              </div>
+                              <p className="fb-msg">"{f.message}"</p>
+                              {f.rating && (
+                                <div className="fb-rating">
+                                  {[...Array(5)].map((_, i) => (
+                                    <Star
+                                      key={i}
+                                      size={14}
+                                      fill={i < f.rating ? 'var(--admin-warning)' : 'transparent'}
+                                      color={i < f.rating ? 'var(--admin-warning)' : 'var(--admin-border)'}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {adminTab === 'analytics' && (
+            <>
+              <div className="admin-panel">
+                <div className="panel-header">
+                  <h3 className="panel-title">
+                    <LineChart size={20} color="var(--admin-accent)" />
+                    Detailed Activity Timeline
+                  </h3>
+                </div>
+                <div className="svg-chart-container">
+                  <CustomLineChart data={analytics.dau} />
+                </div>
+              </div>
+
+              <div className="chart-grid">
+                <FeatureList
+                  title="All Features"
+                  icon={BarChart3}
+                  items={analytics.features.map(f => ({
+                    name: f._id.replace('tab_', ''),
+                    count: f.clicks
+                  }))}
+                />
+                <FeatureList
+                  title="User Interactions"
+                  icon={MousePointer2}
+                  items={analytics.interactions.map(f => ({
+                    name: f._id.replace(/_/g, ' '),
+                    count: f.count
+                  }))}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 export default AdminPortal;
+
+// import React, { useState, useEffect } from 'react';
+// import axios from 'axios';
+// import { 
+//   Lock, LayoutDashboard, Activity, Users, MousePointer2, 
+//   TrendingUp, Globe, CheckCircle2, MessageSquare, LogOut, Loader2, Server,
+//   X, Calendar, Clock, ArrowRight, UserCircle
+// } from 'lucide-react';
+
+// const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+
+// const adminStyles = `
+//   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+//   :root {
+//     --admin-primary: #0F172A;
+//     --admin-secondary: #1E293B;
+//     --admin-accent: #DBA315;
+//     --admin-accent-light: rgba(219, 163, 21, 0.15);
+//     --admin-bg: #F8FAFC;
+//     --admin-card: #FFFFFF;
+//     --admin-text-main: #0F172A;
+//     --admin-text-muted: #64748B;
+//     --admin-border: #E2E8F0;
+//     --admin-success: #10B981;
+//     --admin-danger: #EF4444;
+//   }
+
+//   .admin-wrapper {
+//     font-family: 'Inter', sans-serif;
+//     color: var(--admin-text-main);
+//     box-sizing: border-box;
+//   }
+
+//   .admin-wrapper * {
+//     box-sizing: border-box;
+//   }
+
+//   /* --- LOGIN SCREEN --- */
+//   .admin-login-screen {
+//     display: flex;
+//     align-items: center;
+//     justify-content: center;
+//     min-height: 100vh;
+//     background: linear-gradient(135deg, var(--admin-primary), var(--admin-secondary));
+//     position: relative;
+//     overflow: hidden;
+//   }
+  
+//   .admin-login-screen::before {
+//     content: '';
+//     position: absolute;
+//     width: 600px;
+//     height: 600px;
+//     background: var(--admin-accent);
+//     filter: blur(150px);
+//     opacity: 0.15;
+//     border-radius: 50%;
+//     top: -200px;
+//     right: -100px;
+//   }
+
+//   .admin-login-card {
+//     background: rgba(255, 255, 255, 0.95);
+//     backdrop-filter: blur(10px);
+//     padding: 3rem 2.5rem;
+//     border-radius: 24px;
+//     box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+//     width: 100%;
+//     max-width: 420px;
+//     text-align: center;
+//     z-index: 10;
+//     border: 1px solid rgba(255,255,255,0.2);
+//     transform: translateY(0);
+//     animation: floatIn 0.5s ease-out;
+//   }
+
+//   @keyframes floatIn {
+//     from { opacity: 0; transform: translateY(20px); }
+//     to { opacity: 1; transform: translateY(0); }
+//   }
+
+//   .admin-login-card h2 {
+//     font-size: 1.75rem;
+//     font-weight: 800;
+//     margin: 1rem 0 2rem;
+//     color: var(--admin-primary);
+//   }
+
+//   .admin-input-group {
+//     position: relative;
+//     margin-bottom: 1.5rem;
+//   }
+
+//   .admin-login-input {
+//     width: 100%;
+//     padding: 14px 16px;
+//     border-radius: 12px;
+//     border: 2px solid var(--admin-border);
+//     font-size: 1rem;
+//     transition: all 0.2s;
+//     background: #fff;
+//     outline: none;
+//   }
+
+//   .admin-login-input:focus {
+//     border-color: var(--admin-accent);
+//     box-shadow: 0 0 0 4px var(--admin-accent-light);
+//   }
+
+//   .admin-btn {
+//     width: 100%;
+//     padding: 14px;
+//     background: var(--admin-accent);
+//     color: white;
+//     border: none;
+//     border-radius: 12px;
+//     font-size: 1rem;
+//     font-weight: 700;
+//     cursor: pointer;
+//     transition: all 0.2s;
+//     display: flex;
+//     align-items: center;
+//     justify-content: center;
+//     gap: 8px;
+//   }
+
+//   .admin-btn:hover {
+//     background: #c59212;
+//     transform: translateY(-2px);
+//     box-shadow: 0 4px 12px rgba(219, 163, 21, 0.3);
+//   }
+
+//   .admin-btn:disabled {
+//     opacity: 0.7;
+//     cursor: not-allowed;
+//     transform: none;
+//   }
+
+//   /* --- DASHBOARD LAYOUT --- */
+//   .admin-layout {
+//     display: flex;
+//     height: 100vh;
+//     background: var(--admin-bg);
+//     overflow: hidden;
+//   }
+
+//   .admin-sidebar {
+//     width: 280px;
+//     background: var(--admin-primary);
+//     color: white;
+//     display: flex;
+//     flex-direction: column;
+//     padding: 2rem 1.5rem;
+//     transition: all 0.3s;
+//     z-index: 20;
+//   }
+
+//   .admin-brand {
+//     display: flex;
+//     align-items: center;
+//     gap: 12px;
+//     font-size: 1.5rem;
+//     font-weight: 800;
+//     color: white;
+//     margin-bottom: 3rem;
+//   }
+
+//   .admin-brand .icon-wrap {
+//     background: var(--admin-accent);
+//     padding: 8px;
+//     border-radius: 10px;
+//     display: flex;
+//   }
+
+//   .admin-nav {
+//     display: flex;
+//     flex-direction: column;
+//     gap: 8px;
+//     flex: 1;
+//   }
+
+//   .admin-nav-item {
+//     display: flex;
+//     align-items: center;
+//     gap: 12px;
+//     padding: 14px 16px;
+//     border-radius: 12px;
+//     color: #94A3B8;
+//     font-weight: 600;
+//     cursor: pointer;
+//     transition: all 0.2s;
+//     border: none;
+//     background: transparent;
+//     text-align: left;
+//     font-size: 0.95rem;
+//   }
+
+//   .admin-nav-item:hover {
+//     background: rgba(255,255,255,0.05);
+//     color: white;
+//   }
+
+//   .admin-nav-item.active {
+//     background: var(--admin-accent);
+//     color: white;
+//     box-shadow: 0 4px 12px rgba(219, 163, 21, 0.2);
+//   }
+
+//   .admin-logout {
+//     margin-top: auto;
+//     padding: 14px 16px;
+//     background: rgba(239, 68, 68, 0.1);
+//     color: #FCA5A5;
+//     border: 1px solid rgba(239, 68, 68, 0.2);
+//     border-radius: 12px;
+//     cursor: pointer;
+//     font-weight: 600;
+//     display: flex;
+//     align-items: center;
+//     gap: 12px;
+//     transition: all 0.2s;
+//   }
+
+//   .admin-logout:hover {
+//     background: rgba(239, 68, 68, 0.2);
+//     color: white;
+//   }
+
+//   .admin-main {
+//     flex: 1;
+//     overflow-y: auto;
+//     padding: 2.5rem 3rem;
+//     position: relative;
+//     scroll-behavior: smooth;
+//   }
+
+//   .admin-header {
+//     display: flex;
+//     justify-content: space-between;
+//     align-items: flex-end;
+//     margin-bottom: 2.5rem;
+//     animation: fadeSlideDown 0.4s ease-out;
+//   }
+
+//   @keyframes fadeSlideDown {
+//     from { opacity: 0; transform: translateY(-10px); }
+//     to { opacity: 1; transform: translateY(0); }
+//   }
+
+//   .admin-title {
+//     font-size: 2rem;
+//     font-weight: 800;
+//     color: var(--admin-primary);
+//     margin: 0 0 0.25rem 0;
+//   }
+
+//   .admin-subtitle {
+//     color: var(--admin-text-muted);
+//     font-weight: 500;
+//     font-size: 0.95rem;
+//     margin: 0;
+//   }
+
+//   /* --- STATS GRID --- */
+//   .admin-stats-grid {
+//     display: grid;
+//     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+//     gap: 1.5rem;
+//     margin-bottom: 2.5rem;
+//   }
+
+//   .stat-card {
+//     background: var(--admin-card);
+//     padding: 1.5rem;
+//     border-radius: 20px;
+//     border: 1px solid var(--admin-border);
+//     box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02), 0 2px 4px -1px rgba(0,0,0,0.02);
+//     display: flex;
+//     align-items: center;
+//     gap: 1.25rem;
+//     transition: transform 0.2s, box-shadow 0.2s;
+//     animation: fadeInUp 0.5s ease-out backwards;
+//   }
+
+//   .stat-card:hover {
+//     transform: translateY(-3px);
+//     box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
+//   }
+
+//   .stat-card:nth-child(1) { animation-delay: 0.1s; }
+//   .stat-card:nth-child(2) { animation-delay: 0.2s; }
+//   .stat-card:nth-child(3) { animation-delay: 0.3s; }
+//   .stat-card:nth-child(4) { animation-delay: 0.4s; }
+
+//   @keyframes fadeInUp {
+//     from { opacity: 0; transform: translateY(15px); }
+//     to { opacity: 1; transform: translateY(0); }
+//   }
+
+//   .stat-icon {
+//     width: 54px;
+//     height: 54px;
+//     border-radius: 16px;
+//     display: flex;
+//     align-items: center;
+//     justify-content: center;
+//     flex-shrink: 0;
+//   }
+
+//   .stat-icon.gold { background: var(--admin-accent-light); color: var(--admin-accent); }
+//   .stat-icon.blue { background: rgba(59, 130, 246, 0.15); color: #3B82F6; }
+//   .stat-icon.green { background: rgba(16, 185, 129, 0.15); color: var(--admin-success); }
+//   .stat-icon.purple { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; }
+
+//   .stat-info { flex: 1; }
+  
+//   .stat-label {
+//     font-size: 0.85rem;
+//     color: var(--admin-text-muted);
+//     font-weight: 600;
+//     text-transform: uppercase;
+//     letter-spacing: 0.5px;
+//     margin-bottom: 4px;
+//   }
+
+//   .stat-value {
+//     font-size: 2rem;
+//     font-weight: 800;
+//     color: var(--admin-text-main);
+//     line-height: 1.1;
+//   }
+
+//   /* --- CHARTS & CONTAINERS --- */
+//   .chart-grid {
+//     display: grid;
+//     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+//     gap: 1.5rem;
+//     margin-bottom: 2.5rem;
+//   }
+
+//   .admin-panel {
+//     background: var(--admin-card);
+//     padding: 1.75rem;
+//     border-radius: 20px;
+//     border: 1px solid var(--admin-border);
+//     box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+//   }
+
+//   .panel-header {
+//     display: flex;
+//     align-items: center;
+//     gap: 10px;
+//     font-size: 1.15rem;
+//     font-weight: 700;
+//     color: var(--admin-primary);
+//     margin-bottom: 2rem;
+//   }
+
+//   /* Custom CSS Bar Chart */
+//   .css-chart-wrapper {
+//     display: flex;
+//     align-items: flex-end;
+//     justify-content: space-between;
+//     height: 200px;
+//     padding: 10px 0 0 0;
+//     border-bottom: 2px solid var(--admin-border);
+//     position: relative;
+//   }
+
+//   .css-chart-bar-container {
+//     display: flex;
+//     flex-direction: column;
+//     align-items: center;
+//     justify-content: flex-end;
+//     width: 12%;
+//     height: 100%;
+//     position: relative;
+//     group: hover;
+//   }
+
+//   .css-chart-bar {
+//     width: 100%;
+//     border-radius: 6px 6px 0 0;
+//     transition: height 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+//     position: relative;
+//     cursor: pointer;
+//   }
+
+//   .css-chart-bar.gold {
+//     background: linear-gradient(180deg, var(--admin-accent) 0%, rgba(219,163,21,0.4) 100%);
+//   }
+
+//   .css-chart-bar.green {
+//     background: linear-gradient(180deg, var(--admin-success) 0%, rgba(16,185,129,0.4) 100%);
+//   }
+
+//   .css-chart-bar::after {
+//     content: attr(data-tooltip);
+//     position: absolute;
+//     top: -40px;
+//     left: 50%;
+//     transform: translateX(-50%) translateY(10px);
+//     background: var(--admin-primary);
+//     color: white;
+//     padding: 6px 12px;
+//     border-radius: 8px;
+//     font-size: 0.8rem;
+//     font-weight: 600;
+//     white-space: nowrap;
+//     opacity: 0;
+//     pointer-events: none;
+//     transition: all 0.2s ease;
+//     box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+//     z-index: 10;
+//   }
+
+//   .css-chart-bar:hover::after {
+//     opacity: 1;
+//     transform: translateX(-50%) translateY(0);
+//   }
+
+//   .css-chart-label {
+//     margin-top: 12px;
+//     font-size: 0.8rem;
+//     color: var(--admin-text-muted);
+//     font-weight: 600;
+//   }
+
+//   /* --- LISTS & TABLES --- */
+//   .list-row {
+//     display: flex;
+//     align-items: center;
+//     justify-content: space-between;
+//     padding: 16px;
+//     border-radius: 12px;
+//     background: var(--admin-bg);
+//     margin-bottom: 8px;
+//     transition: all 0.2s;
+//     border: 1px solid transparent;
+//   }
+
+//   .list-row:hover {
+//     background: #fff;
+//     border-color: var(--admin-border);
+//     box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+//     transform: scale(1.01);
+//   }
+
+//   .list-name {
+//     font-weight: 600;
+//     color: var(--admin-primary);
+//   }
+
+//   .list-badge {
+//     background: var(--admin-accent-light);
+//     color: #b7860b;
+//     padding: 6px 14px;
+//     border-radius: 20px;
+//     font-size: 0.85rem;
+//     font-weight: 700;
+//   }
+
+//   /* --- USER CARDS --- */
+//   .user-grid {
+//     display: grid;
+//     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+//     gap: 1rem;
+//   }
+
+//   .user-card {
+//     display: flex;
+//     align-items: center;
+//     gap: 16px;
+//     padding: 16px;
+//     background: #fff;
+//     border-radius: 16px;
+//     border: 1px solid var(--admin-border);
+//     transition: all 0.2s;
+//     cursor: pointer;
+//   }
+
+//   .user-card:hover {
+//     border-color: var(--admin-accent);
+//     box-shadow: 0 4px 12px var(--admin-accent-light);
+//     transform: translateY(-2px);
+//   }
+
+//   .user-avatar {
+//     width: 48px;
+//     height: 48px;
+//     border-radius: 14px;
+//     object-fit: cover;
+//     background: var(--admin-bg);
+//   }
+
+//   .user-info {
+//     flex: 1;
+//     min-width: 0;
+//   }
+
+//   .user-name {
+//     font-weight: 700;
+//     color: var(--admin-primary);
+//     font-size: 1rem;
+//     white-space: nowrap;
+//     overflow: hidden;
+//     text-overflow: ellipsis;
+//   }
+
+//   .user-meta {
+//     font-size: 0.85rem;
+//     color: var(--admin-text-muted);
+//     margin-top: 4px;
+//   }
+
+//   .user-status {
+//     text-align: right;
+//   }
+
+//   .status-time {
+//     font-size: 0.85rem;
+//     font-weight: 700;
+//     color: var(--admin-primary);
+//     display: flex;
+//     align-items: center;
+//     gap: 6px;
+//     justify-content: flex-end;
+//   }
+
+//   .status-label {
+//     font-size: 0.75rem;
+//     color: var(--admin-text-muted);
+//     text-transform: uppercase;
+//     margin-top: 4px;
+//   }
+
+//   .dot {
+//     width: 8px;
+//     height: 8px;
+//     border-radius: 50%;
+//     background: var(--admin-success);
+//     box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+//     animation: pulse 2s infinite;
+//   }
+
+//   /* --- FEEDBACK CARDS --- */
+//   .feedback-list {
+//     display: flex;
+//     flex-direction: column;
+//     gap: 1rem;
+//   }
+
+//   .feedback-card {
+//     background: #FFFAF0;
+//     border: 1px solid #FEF08A;
+//     border-left: 4px solid var(--admin-accent);
+//     padding: 1.25rem;
+//     border-radius: 12px;
+//   }
+
+//   .fb-header {
+//     display: flex;
+//     justify-content: space-between;
+//     margin-bottom: 8px;
+//   }
+
+//   .fb-name { font-weight: 700; color: var(--admin-primary); }
+//   .fb-date { font-size: 0.8rem; color: #9CA3AF; font-weight: 500;}
+//   .fb-msg { font-size: 0.95rem; color: #4B5563; line-height: 1.5; margin: 0; }
+
+//   /* --- MODAL (USER DETAILS) --- */
+//   .admin-modal-overlay {
+//     position: fixed;
+//     inset: 0;
+//     background: rgba(15, 23, 42, 0.7);
+//     backdrop-filter: blur(8px);
+//     z-index: 1000;
+//     display: flex;
+//     align-items: center;
+//     justify-content: center;
+//     animation: modalFadeIn 0.3s ease;
+//     padding: 2rem;
+//   }
+
+//   @keyframes modalFadeIn {
+//     from { opacity: 0; }
+//     to { opacity: 1; }
+//   }
+
+//   .admin-modal {
+//     background: var(--admin-bg);
+//     width: 100%;
+//     max-width: 900px;
+//     max-height: 90vh;
+//     border-radius: 24px;
+//     display: flex;
+//     flex-direction: column;
+//     overflow: hidden;
+//     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
+//     animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+//   }
+
+//   @keyframes modalSlideUp {
+//     from { transform: translateY(40px) scale(0.98); opacity: 0; }
+//     to { transform: translateY(0) scale(1); opacity: 1; }
+//   }
+
+//   .admin-modal-header {
+//     padding: 1.5rem 2rem;
+//     background: var(--admin-card);
+//     border-bottom: 1px solid var(--admin-border);
+//     display: flex;
+//     justify-content: space-between;
+//     align-items: flex-start;
+//   }
+
+//   .admin-modal-user {
+//     display: flex;
+//     align-items: center;
+//     gap: 1rem;
+//   }
+
+//   .admin-modal-user img {
+//     width: 64px;
+//     height: 64px;
+//     border-radius: 16px;
+//     object-fit: cover;
+//   }
+
+//   .admin-modal-close {
+//     background: var(--admin-bg);
+//     border: 1px solid var(--admin-border);
+//     border-radius: 50%;
+//     width: 36px;
+//     height: 36px;
+//     display: flex;
+//     align-items: center;
+//     justify-content: center;
+//     cursor: pointer;
+//     color: var(--admin-text-muted);
+//     transition: all 0.2s;
+//   }
+
+//   .admin-modal-close:hover {
+//     background: #FEE2E2;
+//     color: var(--admin-danger);
+//     border-color: #FCA5A5;
+//   }
+
+//   .admin-modal-body {
+//     padding: 2rem;
+//     overflow-y: auto;
+//     flex: 1;
+//   }
+
+//   /* SVG Line Chart */
+//   .svg-chart-container {
+//     width: 100%;
+//     height: 220px;
+//     position: relative;
+//     background: var(--admin-card);
+//     border-radius: 16px;
+//     border: 1px solid var(--admin-border);
+//     padding: 1.5rem;
+//     margin-bottom: 2rem;
+//   }
+
+//   .svg-chart {
+//     width: 100%;
+//     height: 100%;
+//     overflow: visible;
+//   }
+
+//   .svg-grid-line { stroke: var(--admin-border); stroke-width: 1; stroke-dasharray: 4 4; }
+//   .svg-area { fill: url(#goldGradient); opacity: 0.4; }
+//   .svg-line { fill: none; stroke: var(--admin-accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+//   .svg-point { fill: #fff; stroke: var(--admin-accent); stroke-width: 2; transition: all 0.2s; cursor: pointer; }
+//   .svg-point:hover { transform: scale(1.5); fill: var(--admin-accent); }
+//   .svg-text { fill: var(--admin-text-muted); font-size: 12px; font-weight: 500; font-family: 'Inter'; text-anchor: middle; }
+
+//   /* Timeline */
+//   .timeline-container {
+//     position: relative;
+//     padding-left: 2rem;
+//   }
+
+//   .timeline-container::before {
+//     content: '';
+//     position: absolute;
+//     left: 7px;
+//     top: 0;
+//     bottom: 0;
+//     width: 2px;
+//     background: var(--admin-border);
+//   }
+
+//   .timeline-day-group { margin-bottom: 2rem; }
+  
+//   .timeline-day-header {
+//     font-size: 0.9rem;
+//     font-weight: 700;
+//     color: var(--admin-primary);
+//     background: var(--admin-bg);
+//     padding: 6px 12px;
+//     border-radius: 8px;
+//     display: inline-block;
+//     margin-bottom: 1rem;
+//     position: relative;
+//     left: -1rem;
+//     border: 1px solid var(--admin-border);
+//   }
+
+//   .timeline-item {
+//     position: relative;
+//     padding-bottom: 1.5rem;
+//   }
+
+//   .timeline-item::before {
+//     content: '';
+//     position: absolute;
+//     left: -2rem;
+//     top: 6px;
+//     width: 12px;
+//     height: 12px;
+//     border-radius: 50%;
+//     background: var(--admin-accent);
+//     border: 3px solid var(--admin-bg);
+//     box-shadow: 0 0 0 1px var(--admin-border);
+//     z-index: 1;
+//   }
+
+//   .timeline-item.open-event::before { background: var(--admin-success); }
+
+//   .timeline-content {
+//     background: var(--admin-card);
+//     padding: 1rem;
+//     border-radius: 12px;
+//     border: 1px solid var(--admin-border);
+//     box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+//   }
+
+//   .timeline-time {
+//     font-size: 0.8rem;
+//     color: var(--admin-text-muted);
+//     font-weight: 600;
+//     display: flex;
+//     align-items: center;
+//     gap: 4px;
+//     margin-bottom: 4px;
+//   }
+
+//   .timeline-action {
+//     font-size: 0.95rem;
+//     font-weight: 600;
+//     color: var(--admin-text-main);
+//   }
+
+//   @media (max-width: 768px) {
+//     .admin-layout { flex-direction: column; overflow: auto; }
+//     .admin-sidebar { width: 100%; padding: 1.5rem; flex-direction: row; flex-wrap: wrap; justify-content: space-between; align-items: center; }
+//     .admin-brand { margin-bottom: 0; }
+//     .admin-nav { flex-direction: row; width: 100%; margin-top: 1rem; overflow-x: auto; padding-bottom: 5px; }
+//     .admin-logout { margin-top: 1rem; width: 100%; justify-content: center; }
+//     .admin-main { padding: 1.5rem; }
+//     .admin-modal-overlay { padding: 1rem; }
+//     .admin-modal-header { flex-direction: column; gap: 1rem; position: relative; }
+//     .admin-modal-close { position: absolute; top: 1rem; right: 1rem; }
+//   }
+// `;
+
+// // Helper component for drawing the SVG Line Chart
+// const CustomLineChart = ({ data }) => {
+//   if (!data || data.length === 0) return <div style={{textAlign:'center', color: '#888'}}>No activity data</div>;
+
+//   const height = 150;
+//   const width = 800; // Aspect ratio width
+//   const paddingX = 40;
+//   const paddingY = 20;
+//   const effectiveWidth = width - (paddingX * 2);
+//   const effectiveHeight = height - (paddingY * 2);
+
+//   const maxVal = Math.max(...data.map(d => d.count), 5); // Ensure min height scale
+
+//   const points = data.map((d, i) => {
+//     const x = paddingX + (i / (data.length - 1)) * effectiveWidth;
+//     const y = paddingY + effectiveHeight - ((d.count / maxVal) * effectiveHeight);
+//     return { x, y, dateLabel: new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' }), val: d.count };
+//   });
+
+//   const pathD = `M ${points[0].x},${points[0].y} ` + points.slice(1).map(p => `L ${p.x},${p.y}`).join(' ');
+//   const areaD = `${pathD} L ${points[points.length-1].x},${height} L ${points[0].x},${height} Z`;
+
+//   return (
+//     <svg viewBox={`0 0 ${width} ${height + 20}`} className="svg-chart">
+//       <defs>
+//         <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
+//           <stop offset="0%" stopColor="var(--admin-accent)" stopOpacity="1" />
+//           <stop offset="100%" stopColor="var(--admin-accent)" stopOpacity="0" />
+//         </linearGradient>
+//       </defs>
+      
+//       {/* Grid lines */}
+//       <line x1={paddingX} y1={paddingY} x2={width-paddingX} y2={paddingY} className="svg-grid-line" />
+//       <line x1={paddingX} y1={paddingY + effectiveHeight/2} x2={width-paddingX} y2={paddingY + effectiveHeight/2} className="svg-grid-line" />
+//       <line x1={paddingX} y1={paddingY + effectiveHeight} x2={width-paddingX} y2={paddingY + effectiveHeight} className="svg-grid-line" />
+
+//       {/* Area & Line */}
+//       <path d={areaD} className="svg-area" />
+//       <path d={pathD} className="svg-line" />
+
+//       {/* Points & Labels */}
+//       {points.map((p, i) => (
+//         <g key={i}>
+//           <circle cx={p.x} cy={p.y} r="5" className="svg-point">
+//             <title>{p.val} Actions</title>
+//           </circle>
+//           <text x={p.x} y={height + 15} className="svg-text">{p.dateLabel}</text>
+//           {p.val > 0 && <text x={p.x} y={p.y - 12} className="svg-text" style={{fill: 'var(--admin-primary)', fontWeight: 'bold'}}>{p.val}</text>}
+//         </g>
+//       ))}
+//     </svg>
+//   );
+// };
+
+// function AdminPortal() {
+//   const [password, setPassword] = useState('');
+//   const [authData, setAuthData] = useState(null);
+//   const [error, setError] = useState('');
+//   const [loading, setLoading] = useState(false);
+//   const [adminTab, setAdminTab] = useState('overview');
+//   const [currentTime, setCurrentTime] = useState(new Date());
+
+//   // Specific User Details Modal State
+//   const [selectedUserEmail, setSelectedUserEmail] = useState(null);
+//   const [userDetailsData, setUserDetailsData] = useState(null);
+//   const [loadingDetails, setLoadingDetails] = useState(false);
+
+//   // Update clock
+//   useEffect(() => {
+//     if (!authData) return;
+//     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+//     return () => clearInterval(timer);
+//   }, [authData]);
+
+//   const handleLogin = async (e) => {
+//     e.preventDefault(); 
+//     setLoading(true);
+//     try {
+//       const res = await axios.post(`${API_BASE_URL}/api/admin/data`, { password });
+//       setAuthData(res.data); 
+//       setError('');
+//     } catch(err) { 
+//       setError('Invalid Password or Access Denied'); 
+//     } finally { 
+//       setLoading(false); 
+//     }
+//   };
+
+//   const fetchUserDetails = async (email) => {
+//     setSelectedUserEmail(email);
+//     setLoadingDetails(true);
+//     setUserDetailsData(null);
+//     try {
+//         const res = await axios.post(`${API_BASE_URL}/api/admin/user-details`, { password, email });
+        
+//         // Process the 7-day array to ensure all 7 days are present even if count is 0
+//         const rawActivity = res.data.activityRaw || [];
+//         const sevenDaysActivity = [];
+//         const today = new Date();
+//         for (let i = 6; i >= 0; i--) {
+//             const d = new Date(today);
+//             d.setDate(d.getDate() - i);
+//             // Format to YYYY-MM-DD
+//             const iso = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); 
+//             const found = rawActivity.find(a => a._id === iso);
+//             sevenDaysActivity.push({
+//                 date: iso,
+//                 count: found ? found.count : 0
+//             });
+//         }
+
+//         // Group recent events by Day for the timeline
+//         const events = res.data.recentEventsRaw || [];
+//         const groupedEvents = {};
+//         events.forEach(ev => {
+//             const dateObj = new Date(ev.timestamp);
+//             const dateKey = dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+//             if (!groupedEvents[dateKey]) groupedEvents[dateKey] = [];
+//             groupedEvents[dateKey].push(ev);
+//         });
+
+//         setUserDetailsData({
+//             user: res.data.user,
+//             activityPattern: sevenDaysActivity,
+//             groupedEvents
+//         });
+//     } catch (err) {
+//         console.error(err);
+//         alert('Failed to fetch user details.');
+//         setSelectedUserEmail(null);
+//     } finally {
+//         setLoadingDetails(false);
+//     }
+//   };
+
+//   const timeAgo = (date) => {
+//     if (!date) return "Never";
+//     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+//     if (seconds < 60) return "Just now";
+//     const minutes = Math.floor(seconds / 60);
+//     if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
+//     const hours = Math.floor(minutes / 60);
+//     if (hours < 24) return `${hours} hr${hours !== 1 ? 's' : ''} ago`;
+//     const days = Math.floor(hours / 24);
+//     return `${days} day${days !== 1 ? 's' : ''} ago`;
+//   };
+
+//   const formatTimeStr = (dateStr) => {
+//     return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute:'2-digit' });
+//   };
+
+//   const formatNum = (num) => num ? num.toLocaleString('en-US') : '0';
+
+//   if (!authData) {
+//     return (
+//       <div className="admin-wrapper admin-login-screen">
+//         <style>{adminStyles}</style>
+//         <div className="admin-login-card">
+//           <div style={{ display: 'inline-flex', background: 'var(--admin-accent-light)', padding: '1rem', borderRadius: '20px', marginBottom: '1rem' }}>
+//             <Lock size={40} color="var(--admin-accent)" />
+//           </div>
+//           <h2>Admin Secure Access</h2>
+//           <form onSubmit={handleLogin}>
+//             <div className="admin-input-group">
+//               <input 
+//                 type="password" 
+//                 className="admin-login-input"
+//                 placeholder="Enter Administrator Password" 
+//                 value={password} 
+//                 onChange={e => setPassword(e.target.value)} 
+//                 autoFocus
+//               />
+//             </div>
+//             <button type="submit" className="admin-btn" disabled={loading || !password}>
+//               {loading ? <Loader2 size={20} className="lucide-spin" /> : 'Authenticate'}
+//             </button>
+//           </form>
+//           {error && (
+//             <div style={{ color: 'var(--admin-danger)', background: '#FEE2E2', padding: '10px', borderRadius: '8px', marginTop: '1rem', fontWeight: 600, fontSize: '0.9rem' }}>
+//               {error}
+//             </div>
+//           )}
+//         </div>
+//       </div>
+//     );
+//   }
+
+//   const { analytics, users, feedbacks } = authData;
+
+//   const maxDau = analytics.dau.length > 0 ? Math.max(...analytics.dau.map(d => d.count)) : 1;
+//   const maxTraffic = analytics.traffic.length > 0 ? Math.max(...analytics.traffic.map(d => d.hits)) : 1;
+
+//   return (
+//     <div className="admin-wrapper admin-layout">
+//       <style>{adminStyles}</style>
+
+//       {/* MODAL OVERLAY FOR USER DETAILS */}
+//       {selectedUserEmail && (
+//         <div className="admin-modal-overlay" onClick={() => setSelectedUserEmail(null)}>
+//             <div className="admin-modal" onClick={e => e.stopPropagation()}>
+//                 {loadingDetails ? (
+//                     <div style={{ padding: '4rem', textAlign: 'center' }}>
+//                         <Loader2 size={48} color="var(--admin-accent)" className="lucide-spin" style={{ margin: '0 auto' }} />
+//                         <h3 style={{ marginTop: '1rem', color: 'var(--admin-primary)' }}>Loading User Profile...</h3>
+//                     </div>
+//                 ) : userDetailsData ? (
+//                     <>
+//                         <div className="admin-modal-header">
+//                             <div className="admin-modal-user">
+//                                 <img src={userDetailsData.user.picture || `https://ui-avatars.com/api/?name=${userDetailsData.user.name}&background=dba315&color=fff`} alt="" />
+//                                 <div>
+//                                     <h2 style={{ margin: '0 0 4px 0', fontSize: '1.4rem', color: 'var(--admin-primary)' }}>{userDetailsData.user.name}</h2>
+//                                     <div style={{ color: 'var(--admin-text-muted)', fontSize: '0.9rem', display: 'flex', gap: '10px', alignItems: 'center' }}>
+//                                         <span>{userDetailsData.user.email}</span> &bull; 
+//                                         <span>Section {userDetailsData.user.defaultSection}</span> &bull; 
+//                                         <span style={{ color: userDetailsData.user.oltUsername ? 'var(--admin-success)' : 'var(--admin-danger)' }}>
+//                                             {userDetailsData.user.oltUsername ? 'OLT Linked' : 'No OLT'}
+//                                         </span>
+//                                     </div>
+//                                 </div>
+//                             </div>
+//                             <button className="admin-modal-close" onClick={() => setSelectedUserEmail(null)}>
+//                                 <X size={20} />
+//                             </button>
+//                         </div>
+//                         <div className="admin-modal-body">
+//                             <h3 style={{ marginTop: 0, display: 'flex', alignItems:'center', gap: '8px', color: 'var(--admin-primary)' }}>
+//                                 <TrendingUp size={20} color="var(--admin-accent)" /> 7-Day Activity Pattern
+//                             </h3>
+//                             <div className="svg-chart-container">
+//                                 <CustomLineChart data={userDetailsData.activityPattern} />
+//                             </div>
+
+//                             <h3 style={{ marginTop: '2rem', display: 'flex', alignItems:'center', gap: '8px', color: 'var(--admin-primary)' }}>
+//                                 <Clock size={20} color="var(--admin-accent)" /> Session History
+//                             </h3>
+//                             {Object.keys(userDetailsData.groupedEvents).length === 0 ? (
+//                                 <p style={{ color: 'var(--admin-text-muted)' }}>No recent activity found.</p>
+//                             ) : (
+//                                 <div className="timeline-container">
+//                                     {Object.entries(userDetailsData.groupedEvents).map(([dateLabel, events]) => (
+//                                         <div key={dateLabel} className="timeline-day-group">
+//                                             <div className="timeline-day-header"><Calendar size={14} style={{ display: 'inline', verticalAlign: 'text-bottom', marginRight: '4px' }}/> {dateLabel}</div>
+//                                             {events.map((ev, idx) => {
+//                                                 const isOpenEvent = ev.eventName === 'login' || ev.eventName === 'app_opened';
+//                                                 let actionLabel = ev.eventName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+//                                                 if (ev.eventType === 'tab_click') actionLabel = `Viewed ${ev.eventName.replace('tab_', '')} tab`;
+
+//                                                 return (
+//                                                     <div key={idx} className={`timeline-item ${isOpenEvent ? 'open-event' : ''}`}>
+//                                                         <div className="timeline-content">
+//                                                             <div className="timeline-time"><Clock size={12}/> {formatTimeStr(ev.timestamp)}</div>
+//                                                             <div className="timeline-action">
+//                                                                 {isOpenEvent ? '🚀 App Opened / Session Started' : actionLabel}
+//                                                             </div>
+//                                                         </div>
+//                                                     </div>
+//                                                 );
+//                                             })}
+//                                         </div>
+//                                     ))}
+//                                 </div>
+//                             )}
+//                         </div>
+//                     </>
+//                 ) : (
+//                     <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--admin-danger)' }}>Error loading data.</div>
+//                 )}
+//             </div>
+//         </div>
+//       )}
+
+//       {/* SIDEBAR */}
+//       <aside className="admin-sidebar">
+//         <div className="admin-brand">
+//           <div className="icon-wrap"><LayoutDashboard size={24} color="#fff" /></div>
+//           Dashboard
+//         </div>
+        
+//         <div className="admin-nav">
+//           <button className={`admin-nav-item ${adminTab === 'overview' ? 'active' : ''}`} onClick={() => setAdminTab('overview')}>
+//             <Activity size={20} /> Platform Analytics
+//           </button>
+//           <button className={`admin-nav-item ${adminTab === 'users' ? 'active' : ''}`} onClick={() => setAdminTab('users')}>
+//             <Users size={20} /> Users & Feedback
+//           </button>
+//         </div>
+        
+//         <button className="admin-logout" onClick={() => setAuthData(null)}>
+//           <LogOut size={20} /> Secure Logout
+//         </button>
+//       </aside>
+
+//       {/* MAIN CONTENT */}
+//       <main className="admin-main">
+//         <div className="admin-header">
+//           <div>
+//             <h1 className="admin-title">
+//               {adminTab === 'overview' ? 'Platform Overview' : 'User Management'}
+//             </h1>
+//             <p className="admin-subtitle">
+//               Live data as of {currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+//             </p>
+//           </div>
+//         </div>
+
+//         {adminTab === 'overview' && (
+//           <div className="fade-in-section">
+//             {/* STATS */}
+//             <div className="admin-stats-grid">
+//               <div className="stat-card">
+//                 <div className="stat-icon gold"><Users size={28} /></div>
+//                 <div className="stat-info">
+//                   <div className="stat-label">Total Registered Users</div>
+//                   <div className="stat-value">{formatNum(users.length)}</div>
+//                 </div>
+//               </div>
+//               <div className="stat-card">
+//                 <div className="stat-icon blue"><Activity size={28} /></div>
+//                 <div className="stat-info">
+//                   <div className="stat-label">Active Today</div>
+//                   <div className="stat-value">{formatNum(analytics.dau.slice(-1)[0]?.count || 0)}</div>
+//                 </div>
+//               </div>
+//               <div className="stat-card">
+//                 <div className="stat-icon purple"><Server size={28} /></div>
+//                 <div className="stat-info">
+//                   <div className="stat-label">API Requests (24h)</div>
+//                   <div className="stat-value">{formatNum(analytics.traffic.slice(-1)[0]?.hits || 0)}</div>
+//                 </div>
+//               </div>
+//               <div className="stat-card">
+//                 <div className="stat-icon green"><CheckCircle2 size={28} /></div>
+//                 <div className="stat-info">
+//                   <div className="stat-label">OLT Setups Completed</div>
+//                   <div className="stat-value">{formatNum(analytics.oltUsersCount || users.filter(u => u.oltUsername).length)}</div>
+//                 </div>
+//               </div>
+//             </div>
+
+//             {/* CHARTS */}
+//             <div className="chart-grid">
+//               <div className="admin-panel">
+//                 <h3 className="panel-header"><TrendingUp size={20}/> Daily Active Users (7D)</h3>
+//                 <div className="css-chart-wrapper">
+//                   {analytics.dau.length === 0 ? <p style={{color: 'var(--admin-text-muted)', margin: 'auto'}}>No data collected yet</p> : 
+//                     analytics.dau.map((d, i) => {
+//                       const heightPct = Math.max((d.count / maxDau) * 100, 4); // min 4% height
+//                       return (
+//                         <div className="css-chart-bar-container" key={i}>
+//                           <div className="css-chart-bar gold" style={{height: `${heightPct}%`}} data-tooltip={`${formatNum(d.count)} Users`}></div>
+//                           <div className="css-chart-label">{d.date.split('-').slice(1).join('/')}</div>
+//                         </div>
+//                       )
+//                     })
+//                   }
+//                 </div>
+//               </div>
+
+//               <div className="admin-panel">
+//                 <h3 className="panel-header"><Globe size={20}/> Server Traffic (API Hits)</h3>
+//                 <div className="css-chart-wrapper">
+//                   {analytics.traffic.length === 0 ? <p style={{color: 'var(--admin-text-muted)', margin: 'auto'}}>No data collected yet</p> : 
+//                     analytics.traffic.map((d, i) => {
+//                       const heightPct = Math.max((d.hits / maxTraffic) * 100, 4);
+//                       return (
+//                         <div className="css-chart-bar-container" key={i}>
+//                           <div className="css-chart-bar green" style={{height: `${heightPct}%`}} data-tooltip={`${formatNum(d.hits)} Requests`}></div>
+//                           <div className="css-chart-label">{d.date.split('-').slice(1).join('/')}</div>
+//                         </div>
+//                       )
+//                     })
+//                   }
+//                 </div>
+//               </div>
+//             </div>
+
+//             {/* LISTS */}
+//             <div className="chart-grid">
+//               <div className="admin-panel">
+//                 <h3 className="panel-header"><MousePointer2 size={20}/> Popular Features</h3>
+//                 <div>
+//                   {analytics.features.length === 0 ? <p style={{color: 'var(--admin-text-muted)'}}>No interaction data</p> : 
+//                     analytics.features.map(f => (
+//                       <div className="list-row" key={f._id}>
+//                         <div className="list-name">{f._id.replace('tab_', '').toUpperCase()}</div>
+//                         <div className="list-badge">{formatNum(f.clicks)} views</div>
+//                       </div>
+//                     ))
+//                   }
+//                 </div>
+//               </div>
+//               <div className="admin-panel">
+//                 <h3 className="panel-header"><MousePointer2 size={20}/> Top Button Clicks</h3>
+//                 <div>
+//                   {analytics.interactions.length === 0 ? <p style={{color: 'var(--admin-text-muted)'}}>No interaction data</p> : 
+//                     analytics.interactions.map(f => (
+//                       <div className="list-row" key={f._id}>
+//                         <div className="list-name" style={{textTransform: 'capitalize'}}>{f._id.replace(/_/g, ' ')}</div>
+//                         <div className="list-badge" style={{background: '#F1F5F9', color: 'var(--admin-primary)'}}>{formatNum(f.count)} taps</div>
+//                       </div>
+//                     ))
+//                   }
+//                 </div>
+//               </div>
+//             </div>
+//           </div>
+//         )}
+
+//         {adminTab === 'users' && (
+//           <div className="fade-in-section chart-grid" style={{ gridTemplateColumns: '2fr 1fr', alignItems: 'start' }}>
+//             {/* USER DATABASE */}
+//             <div className="admin-panel">
+//               <h3 className="panel-header"><Users size={20}/> Active User Database</h3>
+//               <p style={{ marginTop: '-15px', marginBottom: '20px', fontSize: '0.85rem', color: 'var(--admin-text-muted)' }}>Click on any user card to view detailed analytics and session history.</p>
+//               <div className="user-grid">
+//                 {users.map(u => {
+//                   const timeAgoStr = timeAgo(u.lastActive);
+//                   const isOnline = timeAgoStr === "Just now" || timeAgoStr.includes("min");
+                  
+//                   return (
+//                     <div key={u._id} className="user-card" onClick={() => fetchUserDetails(u.email)}>
+//                       <img src={u.picture || `https://ui-avatars.com/api/?name=${u.name}&background=dba315&color=fff`} className="user-avatar" alt={u.name}/>
+//                       <div className="user-info">
+//                         <div className="user-name" title={u.name}>{u.name}</div>
+//                         <div className="user-meta">{u.email} &middot; Sec {u.defaultSection}</div>
+//                       </div>
+//                       <div className="user-status">
+//                         <div className="status-time">
+//                           {isOnline && <span className="dot"></span>}
+//                           {timeAgoStr}
+//                         </div>
+//                         <div className="status-label">Last Seen</div>
+//                       </div>
+//                     </div>
+//                   )
+//                 })}
+//               </div>
+//             </div>
+
+//             {/* FEEDBACK */}
+//             <div className="admin-panel">
+//               <h3 className="panel-header"><MessageSquare size={20}/> Recent Feedback</h3>
+//               <div className="feedback-list">
+//                 {feedbacks.length === 0 ? <p style={{color: 'var(--admin-text-muted)'}}>No feedback submitted yet.</p> : 
+//                   feedbacks.map(f => (
+//                     <div key={f._id} className="feedback-card">
+//                       <div className="fb-header">
+//                         <span className="fb-name">{f.userName}</span>
+//                         <span className="fb-date">
+//                           {new Date(f.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+//                         </span>
+//                       </div>
+//                       <p className="fb-msg">"{f.message}"</p>
+//                     </div>
+//                   ))
+//                 }
+//               </div>
+//             </div>
+//           </div>
+//         )}
+//       </main>
+//     </div>
+//   );
+// }
+
+// export default AdminPortal;
