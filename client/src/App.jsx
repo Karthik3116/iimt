@@ -88,6 +88,7 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [settingsSectionDraft, setSettingsSectionDraft] = useState(section);
   const [settingsStatus, setSettingsStatus] = useState('');
 
@@ -939,7 +940,7 @@ function App() {
         bottom: calc(112px + env(safe-area-inset-bottom, 0px)) !important;
       }
 
-      /* --- MOBILE BOTTOM NAVIGATION --- */
+      /* --- MOBILE ACCOUNT HEADER --- */
       .sidebar {
         display: none !important;
       }
@@ -947,6 +948,171 @@ function App() {
       .dashboard-layout {
         min-height: 100dvh;
         width: 100%;
+      }
+
+      .mobile-topbar {
+        display: flex !important;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        width: 100%;
+        padding: 12px 16px 10px;
+        background: var(--bg-primary, #08111f);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        z-index: 1100;
+        box-sizing: border-box;
+      }
+
+      .mobile-profile-trigger {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        flex: 1;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        color: var(--text-primary, #fff);
+        text-align: left;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .mobile-profile-avatar {
+        width: 38px;
+        height: 38px;
+        flex: 0 0 38px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 2px solid rgba(240, 200, 92, 0.65);
+      }
+
+      .mobile-profile-copy {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .mobile-profile-name {
+        font-size: 0.88rem;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .mobile-profile-section {
+        font-size: 0.72rem;
+        color: var(--text-secondary, #9aa4b2);
+      }
+
+      .mobile-profile-chevron {
+        flex: 0 0 auto;
+        color: #8d97a7;
+        transition: transform 0.2s ease;
+      }
+
+      .mobile-profile-trigger.open .mobile-profile-chevron {
+        transform: rotate(180deg);
+      }
+
+      .mobile-settings-btn {
+        width: 40px;
+        height: 40px;
+        flex: 0 0 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #c9d0db;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .mobile-settings-btn:active {
+        transform: scale(0.96);
+      }
+
+      .mobile-profile-menu {
+        position: absolute;
+        top: calc(100% - 2px);
+        left: 12px;
+        right: 12px;
+        padding: 14px;
+        border-radius: 18px;
+        background: #121b2a;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+        z-index: 1150;
+      }
+
+      .mobile-profile-menu-title {
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #8f99aa;
+        margin-bottom: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .mobile-section-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .mobile-section-btn {
+        min-width: 0;
+        height: 38px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+        color: #b5bdca;
+        font-size: 0.82rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .mobile-section-btn.active {
+        background: #f0c85c;
+        border-color: #f0c85c;
+        color: #171717;
+      }
+
+      .mobile-profile-menu-divider {
+        height: 1px;
+        margin: 13px 0;
+        background: rgba(255, 255, 255, 0.07);
+      }
+
+      .mobile-profile-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .mobile-profile-action {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 40px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        background: rgba(255, 255, 255, 0.04);
+        color: #c7ced9;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .mobile-profile-action.danger {
+        color: #ef8888;
       }
 
       .main-content {
@@ -1043,13 +1209,25 @@ function App() {
         border-color: #f0c85c;
       }
 
+      .mobile-refresh-fab {
+        bottom: calc(112px + env(safe-area-inset-bottom, 0px)) !important;
+      }
+
       .todo-summary-bar {
         bottom: calc(108px + env(safe-area-inset-bottom, 0px)) !important;
         border-radius: 16px !important;
       }
     }
 
+    .mobile-topbar {
+      display: none;
+    }
+
     @media (min-width: 769px) {
+      .mobile-topbar {
+        display: none !important;
+      }
+
       .mobile-bottom-nav {
         display: none !important;
       }
@@ -3594,6 +3772,131 @@ function App() {
       )}
 
       <div className="dashboard-layout">
+        <div className="mobile-topbar">
+          <button
+            type="button"
+            className={`mobile-profile-trigger ${showMobileMenu ? 'open' : ''}`}
+            onClick={() => setShowMobileMenu(prev => !prev)}
+            aria-label="Profile and section selector"
+            aria-expanded={showMobileMenu}
+          >
+            <img
+              className="mobile-profile-avatar"
+              src={user.picture || getFallbackAvatar(user.name)}
+              alt="Profile"
+              onError={e => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = getFallbackAvatar(user.name);
+              }}
+            />
+
+            <span className="mobile-profile-copy">
+              <span className="mobile-profile-name">{user.name}</span>
+              <span className="mobile-profile-section">Section {section}</span>
+            </span>
+
+            <ChevronDown size={18} className="mobile-profile-chevron" />
+          </button>
+
+          <button
+            type="button"
+            className="mobile-settings-btn"
+            onClick={() => {
+              setSettingsSectionDraft(section);
+              setShowSettingsModal(true);
+              setShowMobileMenu(false);
+              trackEvent('button_click', 'open_settings');
+            }}
+            aria-label="Open settings"
+          >
+            <Settings size={19} />
+          </button>
+
+          {showMobileMenu && (
+            <div className="mobile-profile-menu">
+              <div className="mobile-profile-menu-title">
+                Select Section
+              </div>
+
+              <div className="mobile-section-grid">
+                {SECTIONS.map(sec => (
+                  <button
+                    key={sec}
+                    type="button"
+                    className={`mobile-section-btn ${section === sec ? 'active' : ''}`}
+                    onClick={() => {
+                      setSection(sec);
+                      setShowMobileMenu(false);
+                      trackEvent('action', 'change_section', { to: sec });
+                    }}
+                  >
+                    {sec}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mobile-profile-menu-divider" />
+
+              <div className="mobile-profile-actions">
+                <button
+                  type="button"
+                  className="mobile-profile-action"
+                  onClick={() => {
+                    setSettingsSectionDraft(section);
+                    setShowSettingsModal(true);
+                    setShowMobileMenu(false);
+                    trackEvent('button_click', 'open_settings');
+                  }}
+                >
+                  <Settings size={16} />
+                  Settings
+                </button>
+
+                <button
+                  type="button"
+                  className="mobile-profile-action"
+                  onClick={() => {
+                    setShowFeedbackModal(true);
+                    setShowMobileMenu(false);
+                    trackEvent('button_click', 'open_feedback');
+                  }}
+                >
+                  <MessageSquare size={16} />
+                  Feedback
+                </button>
+
+                <button
+                  type="button"
+                  className="mobile-profile-action"
+                  onClick={() => {
+                    if (isInstallable) {
+                      handleInstallClick();
+                      setShowMobileMenu(false);
+                    }
+                  }}
+                  disabled={!isInstallable}
+                  style={!isInstallable ? { opacity: 0.45, cursor: 'default' } : undefined}
+                >
+                  <Download size={16} />
+                  Install
+                </button>
+
+                <button
+                  type="button"
+                  className="mobile-profile-action danger"
+                  onClick={() => {
+                    setShowMobileMenu(false);
+                    handleLogout();
+                  }}
+                >
+                  <LogOut size={16} />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         <aside className="sidebar">
           <div className="brand-title">
             IIM Trichy
