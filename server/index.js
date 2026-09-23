@@ -710,7 +710,10 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
         if (!text.includes('pageRedirect||')) {
             setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error');
             clearAttendanceProgressSoon(userId);
-            return res.status(401).json({ error: 'Invalid OLT Credentials' });
+            // Use 400 (not 401) here — 401 is reserved for this app's own auth token.
+            // The global axios interceptor logs the user out of the whole app on any 401,
+            // so an OLT-side credential failure must never reuse that status code.
+            return res.status(400).json({ error: 'Invalid OLT Credentials' });
         }
 
         return await completeScrape(client, section, username, res, userId);
