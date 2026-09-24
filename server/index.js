@@ -71,6 +71,7 @@ const userSchema = new mongoose.Schema({
     email: { type: String, unique: true, required: true },
     picture: String,
     defaultSection: { type: String, enum: ALL_SECTIONS, default: 'A' },
+    defaultTerm: { type: String, enum: ['Term-I', 'Term-II'], default: 'Term-II' }, // Added Term Preference
     lastActive: { type: Date, default: Date.now },
     createdAt: { type: Date, default: Date.now },
     oltUsername: { type: String, default: '' },
@@ -120,14 +121,6 @@ const AnalyticsEvent = mongoose.model('AnalyticsEvent', analyticsEventSchema);
 // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
 const ALGORITHM = 'aes-256-cbc';
 
-// The encryption key is derived from JWT_SECRET. If JWT_SECRET was ever unset
-// (falling back to the hardcoded string below) and later set to a real value
-// on the server, credentials saved *before* that change were encrypted under
-// a different key than the one derived "now" — and would otherwise fail to
-// decrypt forever, breaking OLT fetch for every existing user while newly
-// saved credentials keep working fine. CANDIDATE_KEYS lists every key we
-// should be able to read, newest/primary first, so old records still decrypt
-// and get transparently migrated instead of silently breaking.
 const CANDIDATE_SECRETS = [
     process.env.JWT_SECRET || 'iimtrichy_fallback_secret',
     'iimtrichy_fallback_secret',
@@ -155,11 +148,6 @@ function decryptWithKey(text, key) {
     return decrypted;
 }
 
-// Tries every known key (current/primary first, then legacy fallbacks).
-// Returns { plaintext, migrated } — migrated is true when a non-primary key
-// was needed, so the caller can silently re-encrypt & persist under the
-// primary key and avoid ever hitting the slow path again.
-// Throws only if the ciphertext can't be read with ANY known key.
 function decryptTextDetailed(text) {
     if (!text) return { plaintext: '', migrated: false };
     let lastErr = null;
@@ -174,8 +162,6 @@ function decryptTextDetailed(text) {
     throw lastErr || new Error('Unable to decrypt with any known key');
 }
 
-// Backwards-compatible simple decrypt: returns '' on total failure instead
-// of throwing (kept for any other callers that expect that behavior).
 function decryptText(text) {
     try {
         return decryptTextDetailed(text).plaintext;
@@ -191,7 +177,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod
 
 // --- AUTHENTICATION & TRAFFIC MIDDLEWARE ---
 app.use((req, res, next) => {
-    // Log API Traffic (exclude admin/analytics endpoints to avoid noise)
     if (req.path.startsWith('/api') && !req.path.includes('/admin') && !req.path.includes('/analytics') && !req.path.includes('/attendance/progress')) {
         TrafficLog.create({ endpoint: req.path, method: req.method }).catch(() => {});
     }
@@ -294,6 +279,23 @@ app.post('/api/user/section', authenticateUser, async (req, res) => {
     }
 });
 
+app.post('/api/user/term', authenticateUser, async (req, res) => {
+    const { term } = req.body;
+    if (!term || !['Term-I', 'Term-II'].includes(term)) {
+        return res.status(400).json({ error: 'Invalid term.' });
+    }
+    try {
+        const user = await User.findByIdAndUpdate(
+            req.user.id,
+            { defaultTerm: term },
+            { new: true }
+        ).select('-__v');
+        res.json({ success: true, user });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error saving term preference.' });
+    }
+});
+
 app.post('/api/user/olt-credentials', authenticateUser, async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -352,10 +354,8 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
         const users = await User.find().sort({ lastActive: -1 }).select('-__v -oltPassword');
         
-        // Count users who have successfully saved their OLT credentials
         const oltUsersCount = await User.countDocuments({ oltUsername: { $exists: true, $ne: '' } });
 
-        // Analytics: Daily Active Users (Last 7 days)
         const dauData = await AnalyticsEvent.aggregate([
             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
             { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, uniqueUsers: { $addToSet: "$userEmail" } } },
@@ -363,7 +363,6 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
             { $sort: { date: 1 } }
         ]);
 
-        // Analytics: Server Traffic (Last 7 days)
         const trafficData = await TrafficLog.aggregate([
             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
             { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, hits: { $sum: 1 } } },
@@ -371,14 +370,12 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
             { $sort: { date: 1 } }
         ]);
 
-        // Analytics: Feature Usage
         const featureUsage = await AnalyticsEvent.aggregate([
             { $match: { eventType: 'tab_click' } },
             { $group: { _id: "$eventName", clicks: { $sum: 1 } } },
             { $sort: { clicks: -1 } }
         ]);
 
-        // Analytics: Button Clicks
         const interactions = await AnalyticsEvent.aggregate([
             { $match: { eventType: 'button_click' } },
             { $group: { _id: "$eventName", count: { $sum: 1 } } },
@@ -404,7 +401,6 @@ app.post('/api/admin/data', strictLimiter, async (req, res) => {
     }
 });
 
-// --- NEW: USER SPECIFIC ANALYTICS ENDPOINT ---
 app.post('/api/admin/user-details', strictLimiter, async (req, res) => {
     const { password, email } = req.body;
     if (password !== ADMIN_PASSWORD) {
@@ -415,7 +411,6 @@ app.post('/api/admin/user-details', strictLimiter, async (req, res) => {
         const user = await User.findOne({ email }).select('-__v -oltPassword');
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        // Generate 7-day activity graph specifically for this user
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         
         const activityRaw = await AnalyticsEvent.aggregate([
@@ -427,7 +422,6 @@ app.post('/api/admin/user-details', strictLimiter, async (req, res) => {
             { $sort: { _id: 1 } }
         ]);
 
-        // Fetch last 150 events to construct timeline session history
         const recentEventsRaw = await AnalyticsEvent.find({ userEmail: email })
             .sort({ timestamp: -1 })
             .limit(150);
@@ -443,7 +437,6 @@ app.post('/api/admin/user-details', strictLimiter, async (req, res) => {
         res.status(500).json({ error: "Server error fetching user details." });
     }
 });
-
 
 app.get('/api/todos', authenticateUser, async (req, res) => {
     try {
@@ -495,23 +488,39 @@ const BASE_URL = "https://olt.iimtrichy.ac.in";
 const LOGIN_URL = `${BASE_URL}/Default.aspx`;
 const ATTENDANCE_URL = `${BASE_URL}/SubjectAttendance`;
 
-const SUBJECTS = [
-    "Business Statistics", "Financial Reporting and Analysis", "Managerial Communication", 
-    "Managerial Economics", "Marketing Management -I", "Micro Organizational Behaviour"
-];
+const TERMS = {
+    "Term-I": [
+        "Business Statistics", 
+        "Financial Reporting and Analysis", 
+        "Managerial Communication", 
+        "Managerial Economics", 
+        "Marketing Management -I", 
+        "Micro Organizational Behaviour"
+    ],
+    "Term-II": [
+        "Business Ethics", //
+        "Corporate Finance", //
+        "Information Systems for Managers", //
+        "Macro Economics for Managers", //
+        "Macro Organizational Behaviour", //
+        "Marketing Management-II", //
+        "Operations Research for Managers", //
+        "The Entrepreneurial Manager" //
+    ]
+};
 
 // ============================================================
 // ATTENDANCE FETCH PROGRESS TRACKING (in-memory, per-user)
 // ============================================================
-// Total steps: 1 (connect) + 1 (load report module) + SUBJECTS.length (one per subject)
-const ATTENDANCE_PROGRESS_TOTAL = SUBJECTS.length + 2;
 const attendanceProgress = new Map();
 
-function setAttendanceProgress(userId, step, message, status = 'in_progress') {
+function setAttendanceProgress(userId, step, message, status = 'in_progress', total = 8) {
     if (!userId) return;
+    const current = attendanceProgress.get(String(userId));
+    const progressTotal = total || (current ? current.total : 8);
     attendanceProgress.set(String(userId), {
         step,
-        total: ATTENDANCE_PROGRESS_TOTAL,
+        total: progressTotal,
         message,
         status,
         timestamp: Date.now()
@@ -523,7 +532,6 @@ function clearAttendanceProgressSoon(userId) {
     setTimeout(() => attendanceProgress.delete(String(userId)), 15000);
 }
 
-// Clean up stale progress entries so the map doesn't grow unbounded
 setInterval(() => {
     const now = Date.now();
     for (const [id, progress] of attendanceProgress.entries()) {
@@ -534,7 +542,7 @@ setInterval(() => {
 app.get('/api/attendance/progress', authenticateUser, (req, res) => {
     const progress = attendanceProgress.get(String(req.user.id)) || {
         step: 0,
-        total: ATTENDANCE_PROGRESS_TOTAL,
+        total: 8,
         message: 'Waiting to start…',
         status: 'idle'
     };
@@ -591,18 +599,30 @@ class OLTClient {
 function parseFullForm(html) {
     const $ = cheerio.load(html);
     const data = {};
+
     $('input').each((i, el) => {
         const name = $(el).attr('name');
         if (!name) return;
+
         const type = ($(el).attr('type') || 'text').toLowerCase();
+
         if (['submit', 'button', 'reset', 'image'].includes(type)) return;
         if (['checkbox', 'radio'].includes(type) && !$(el).is(':checked')) return;
+
         data[name] = $(el).attr('value') || '';
     });
+
     $('select').each((i, el) => {
         const name = $(el).attr('name');
-        if (name) data[name] = $(el).find('option[selected]').attr('value') || $(el).find('option').first().attr('value') || '';
+
+        if (name) {
+            data[name] =
+                $(el).find('option[selected]').attr('value') ||
+                $(el).find('option').first().attr('value') ||
+                '';
+        }
     });
+
     return data;
 }
 
@@ -672,8 +692,7 @@ function extractAttendance(html, rollNo) {
     
     for (let i = 2; i < headerCells.length - 2; i++) {
         const htmlContent = $(headerCells[i]).html() || '';
-        const $cell = cheerio.load(htmlContent);
-        $cell('br').replaceWith('\n');
+        const $cell = cheerio.load(htmlContent);$cell('br').replaceWith('\n');
         
         const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
         
@@ -726,20 +745,19 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
         
         const username = user.oltUsername;
         const section = user.defaultSection || 'A';
+        const term = req.body.term || user.defaultTerm || 'Term-II';
+        const subjects = TERMS[term] || TERMS["Term-II"];
+        const totalSteps = subjects.length + 2;
 
         let password;
         try {
             const decrypted = decryptTextDetailed(user.oltPassword);
             password = decrypted.plaintext;
             if (decrypted.migrated) {
-                // Saved under an older key — silently re-encrypt under the
-                // current primary key so this user never hits this path again.
                 User.findByIdAndUpdate(userId, { oltPassword: encryptText(password) }).catch(() => {});
             }
         } catch (err) {
-            // Genuinely unreadable under every known key — the only case
-            // where we actually need the user to re-enter their password.
-            setAttendanceProgress(userId, 0, 'Saved credentials could not be read.', 'error');
+            setAttendanceProgress(userId, 0, 'Saved credentials could not be read.', 'error', totalSteps);
             clearAttendanceProgressSoon(userId);
             return res.status(400).json({
                 error: 'Your saved OLT credentials could not be read. Please re-enter and save them again.',
@@ -747,7 +765,7 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
             });
         }
 
-        setAttendanceProgress(userId, 0, 'Connecting to OLT portal…');
+        setAttendanceProgress(userId, 0, 'Connecting to OLT portal…', 'in_progress', totalSteps);
 
         const client = new OLTClient();
         const initial = await client.get(LOGIN_URL);
@@ -763,47 +781,44 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
         state['__LASTFOCUS'] = '';
         state['__ASYNCPOST'] = 'true';
 
-        setAttendanceProgress(userId, 1, 'Verifying your credentials…');
+        setAttendanceProgress(userId, 1, 'Verifying your credentials…', 'in_progress', totalSteps);
         const loginRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
         const text = loginRes.data;
 
         if (!text.includes('pageRedirect||')) {
-            setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error');
+            setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error', totalSteps);
             clearAttendanceProgressSoon(userId);
-            // Use 400 (not 401) here — 401 is reserved for this app's own auth token.
-            // The global axios interceptor logs the user out of the whole app on any 401,
-            // so an OLT-side credential failure must never reuse that status code.
             return res.status(400).json({ error: 'Invalid OLT Credentials' });
         }
 
-        return await completeScrape(client, section, username, res, userId);
+        return await completeScrape(client, section, username, res, userId, term, subjects, totalSteps);
     } catch (error) {
         console.error(error);
-        setAttendanceProgress(userId, 0, 'Error connecting to OLT portal.', 'error');
+        setAttendanceProgress(userId, 0, 'Error connecting to OLT portal.', 'error', 8);
         clearAttendanceProgressSoon(userId);
         res.status(500).json({ error: 'Error connecting to OLT portal' });
     }
 });
 
-async function completeScrape(client, section, username, res, userId) {
+async function completeScrape(client, section, username, res, userId, term, subjects, totalSteps) {
     try {
-        setAttendanceProgress(userId, 2, 'Loading your attendance report…');
+        setAttendanceProgress(userId, 2, 'Loading your attendance report…', 'in_progress', totalSteps);
         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
         const state = parseFullForm(attendanceRes.data);
         
-        const PROGRAM = "PGPM 2026-28", TERM = "Term-I";
+        const PROGRAM = "PGPM 2026-28", TERM_VAL = term;
         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName'] !== PROGRAM) {
             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName', PROGRAM);
         }
             
-        if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM) {
-            await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM);
+        if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM_VAL) {
+            await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM_VAL);
         }
 
         const results = {};
-        for (let i = 0; i < SUBJECTS.length; i++) {
-            const subject = SUBJECTS[i];
-            setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${SUBJECTS.length})…`);
+        for (let i = 0; i < subjects.length; i++) {
+            const subject = subjects[i];
+            setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${subjects.length})…`, 'in_progress', totalSteps);
 
             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
             const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
@@ -817,16 +832,17 @@ async function completeScrape(client, section, username, res, userId) {
         const hasAnyRecord = Object.values(results).some(sub => sub.total > 0);
         setAttendanceProgress(
             userId,
-            ATTENDANCE_PROGRESS_TOTAL,
+            totalSteps,
             hasAnyRecord ? 'Done!' : 'Finished, but no matching records were found.',
-            'done'
+            'done',
+            totalSteps
         );
         clearAttendanceProgressSoon(userId);
 
-        res.json({ success: true, results, section });
+        res.json({ success: true, results, section, term });
     } catch (error) {
         console.error("Scrape Error:", error);
-        setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error');
+        setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error', totalSteps);
         clearAttendanceProgressSoon(userId);
         res.status(500).json({ error: 'Failed to extract attendance data' });
     }
@@ -1009,7 +1025,6 @@ const extractSectionData = (workbook, section) => {
             const c2 = getCellText(row.getCell(2)).toLowerCase();
             const t1 = getCellText(row.getCell(targetCol)).toLowerCase();
 
-            // Updated for Term 2 summary format
             if (c1.includes('course') || c2.includes('actual teaching') || c1.includes('actual teaching') ||
                 t1.includes('course') || t1.includes('actual teaching')) {
                 summaryStartIndex = rowNumber;
@@ -1107,7 +1122,6 @@ const extractSectionData = (workbook, section) => {
         });
 
         if (actualTeachingCol !== -1) {
-            // Updated dynamically for Term 2 summary format
             summaryData.headers = ['Course', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
             sheet.eachRow((row, rowNumber) => {
                 if (rowNumber > summaryStartIndex) {
@@ -1139,66 +1153,6 @@ let isFetching = false;
 let activeFetchPromise = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-// const updateCache = async () => {
-//     if (isFetching) return activeFetchPromise;
-//     isFetching = true;
-
-//     activeFetchPromise = (async () => {
-//         try {
-//             console.log("[Cache] Downloading Term-II Excel sheet from Google Drive...");
-            
-//             // --- UPDATED GOOGLE AUTH LOGIC ---
-//             let authOptions = {
-//                 scopes: ['https://www.googleapis.com/auth/drive.readonly'],
-//             };
-
-//             // Use Environment Variable in production (Render), fallback to file locally
-//             if (process.env.GOOGLE_CREDENTIALS) {
-//                 authOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-//             } else {
-//                 authOptions.keyFile = 'credentials.json';
-//             }
-
-//             const auth = new google.auth.GoogleAuth(authOptions);
-//             const drive = google.drive({ version: 'v3', auth });
-
-//             // Using the precise new File ID provided by your script
-//             const fileId = '1-8A3GXCBJD-zRoCYRnhIXzMEjqsrqsU0';
-            
-//             const response = await drive.files.get(
-//                 { fileId, alt: 'media' },
-//                 { responseType: 'arraybuffer' }
-//             );
-
-//             const workbook = new ExcelJS.Workbook();
-//             await workbook.xlsx.load(response.data);
-
-//             const newCache = {};
-//             for (const sec of ALL_SECTIONS) {
-//                 const data = extractSectionData(workbook, sec);
-//                 if (data) newCache[sec] = data;
-//             }
-
-//             globalCache = newCache;
-//             lastFetchTime = Date.now();
-//             console.log("[Cache] Successfully updated all Term-II sections in memory.");
-//             return globalCache;
-//         } catch (error) {
-//             console.error("[Cache Error] Failed to fetch or parse Excel data from Drive:", error);
-//             throw error;
-//         } finally {
-//             isFetching = false;
-//         }
-//     })();
-
-//     return activeFetchPromise;
-// };
-
-// ============================================================
-// 7. TIMETABLE API
-// ============================================================
-
-
 const updateCache = async () => {
     if (isFetching) return activeFetchPromise;
     isFetching = true;
@@ -1210,7 +1164,6 @@ const updateCache = async () => {
             const bridgeUrl = "https://script.google.com/macros/s/AKfycbzqdMacopeFnXZmc9MgnN2cdTyZjIqCbMyDUQvx6VAMounnDswc88hmu5vOmhLZSmTfgw/exec";
             const response = await axios.get(bridgeUrl, { responseType: 'text' });
             
-            // Convert the base64 string from the bridge back into a raw file buffer
             const buffer = Buffer.from(response.data, 'base64');
 
             const workbook = new ExcelJS.Workbook();
@@ -1303,6 +1256,7 @@ app.listen(PORT, () => {
 // const jwt = require('jsonwebtoken');
 // const crypto = require('crypto');
 // const cheerio = require('cheerio');
+// const { google } = require('googleapis'); // Added for Google Drive API
 
 // // Security middlewares
 // const helmet = require('helmet');
@@ -2130,8 +2084,6 @@ app.listen(PORT, () => {
 // // 4. EXCEL PARSING HELPER FUNCTIONS
 // // ============================================================
 
-// const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
-
 // const getCellText = (cell) => {
 //     if (!cell || cell.value === null || cell.value === undefined) return '';
 //     if (typeof cell.value === 'object') {
@@ -2305,8 +2257,9 @@ app.listen(PORT, () => {
 //             const c2 = getCellText(row.getCell(2)).toLowerCase();
 //             const t1 = getCellText(row.getCell(targetCol)).toLowerCase();
 
-//             if (c1.includes('sessions') || c2.includes('credits') || c1 === '20' || c1.includes('actual teaching') ||
-//                 t1.includes('sessions') || t1.includes('credits') || t1 === '20' || t1.includes('actual teaching')) {
+//             // Updated for Term 2 summary format
+//             if (c1.includes('course') || c2.includes('actual teaching') || c1.includes('actual teaching') ||
+//                 t1.includes('course') || t1.includes('actual teaching')) {
 //                 summaryStartIndex = rowNumber;
 //             }
 //         }
@@ -2402,20 +2355,19 @@ app.listen(PORT, () => {
 //         });
 
 //         if (actualTeachingCol !== -1) {
-//             summaryData.headers = ['Subject', 'Credits', 'Sessions', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
+//             // Updated dynamically for Term 2 summary format
+//             summaryData.headers = ['Course', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
 //             sheet.eachRow((row, rowNumber) => {
 //                 if (rowNumber > summaryStartIndex) {
-//                     const sessions = getCellText(row.getCell(1));
-//                     const credits = getCellText(row.getCell(2));
-//                     const subject = getCellText(row.getCell(actualTeachingCol - 1));
+//                     const course = getCellText(row.getCell(actualTeachingCol - 1));
 //                     const actualTeaching = getCellText(row.getCell(actualTeachingCol));
 //                     const preMid = getCellText(row.getCell(actualTeachingCol + 1));
 //                     const postMid = getCellText(row.getCell(actualTeachingCol + 2));
 //                     const guestSpeaker = getCellText(row.getCell(actualTeachingCol + 3));
 //                     const total = getCellText(row.getCell(actualTeachingCol + 4));
 
-//                     if (subject && subject.trim() !== '' && !subject.toLowerCase().includes('class cancelled') && !subject.toLowerCase().includes('make up session')) {
-//                         summaryData.rows.push([subject, credits, sessions, actualTeaching, preMid, postMid, guestSpeaker, total]);
+//                     if (course && course.trim() !== '' && !course.toLowerCase().includes('class cancelled') && !course.toLowerCase().includes('make up session') && !course.toLowerCase().includes('course')) {
+//                         summaryData.rows.push([course, actualTeaching, preMid, postMid, guestSpeaker, total]);
 //                     }
 //                 }
 //             });
@@ -2435,16 +2387,24 @@ app.listen(PORT, () => {
 // let activeFetchPromise = null;
 // const CACHE_TTL_MS = 5 * 60 * 1000;
 
+
+
 // const updateCache = async () => {
 //     if (isFetching) return activeFetchPromise;
 //     isFetching = true;
 
 //     activeFetchPromise = (async () => {
 //         try {
-//             console.log("[Cache] Downloading and parsing Excel sheet...");
-//             const response = await axios.get(SHEET_URL, { responseType: 'arraybuffer' });
+//             console.log("[Cache] Downloading Term-II Excel sheet via Apps Script Bridge...");
+            
+//             const bridgeUrl = "https://script.google.com/macros/s/AKfycbzqdMacopeFnXZmc9MgnN2cdTyZjIqCbMyDUQvx6VAMounnDswc88hmu5vOmhLZSmTfgw/exec";
+//             const response = await axios.get(bridgeUrl, { responseType: 'text' });
+            
+//             // Convert the base64 string from the bridge back into a raw file buffer
+//             const buffer = Buffer.from(response.data, 'base64');
+
 //             const workbook = new ExcelJS.Workbook();
-//             await workbook.xlsx.load(response.data);
+//             await workbook.xlsx.load(buffer);
 
 //             const newCache = {};
 //             for (const sec of ALL_SECTIONS) {
@@ -2454,10 +2414,10 @@ app.listen(PORT, () => {
 
 //             globalCache = newCache;
 //             lastFetchTime = Date.now();
-//             console.log("[Cache] Successfully updated all sections in memory.");
+//             console.log("[Cache] Successfully updated all Term-II sections in memory.");
 //             return globalCache;
 //         } catch (error) {
-//             console.error("[Cache Error] Failed to fetch or parse Excel data:", error);
+//             console.error("[Cache Error] Failed to fetch or parse Excel data from Bridge:", error.message);
 //             throw error;
 //         } finally {
 //             isFetching = false;
@@ -2466,10 +2426,6 @@ app.listen(PORT, () => {
 
 //     return activeFetchPromise;
 // };
-
-// // ============================================================
-// // 7. TIMETABLE API
-// // ============================================================
 
 // app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 //     const section = req.params.section.toUpperCase();

@@ -61,6 +61,11 @@ function App() {
     return stored && SECTIONS.includes(stored) ? stored : 'A';
   });
 
+  const [term, setTerm] = useState(() => {
+    const stored = localStorage.getItem('iimt_term');
+    return stored && ['Term-I', 'Term-II'].includes(stored) ? stored : 'Term-II';
+  });
+
   const [cache, setCache] = useState({});
   const [scheduleData, setScheduleData] = useState([]);
   const [summaryData, setSummaryData] = useState({ headers: [], rows: [] });
@@ -237,10 +242,16 @@ function App() {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/user/me`, { headers: { Authorization: `Bearer ${token}` } });
       const savedSection = res.data?.user?.defaultSection;
+      const savedTerm = res.data?.user?.defaultTerm;
+      
       setHasOltCreds(res.data?.user?.hasOltCreds || false);
       if (savedSection && SECTIONS.includes(savedSection)) {
         setSection(savedSection);
         localStorage.setItem(SECTION_STORAGE_KEY, savedSection);
+      }
+      if (savedTerm && ['Term-I', 'Term-II'].includes(savedTerm)) {
+        setTerm(savedTerm);
+        localStorage.setItem('iimt_term', savedTerm);
       }
     } catch (err) {
       console.error("Failed to fetch user profile", err);
@@ -267,7 +278,6 @@ function App() {
 
     if (user) {
       const token = localStorage.getItem('iimt_token');
-
       axios.post(
         `${API_BASE_URL}/api/user/section`,
         { section },
@@ -275,6 +285,19 @@ function App() {
       ).catch(err => console.error("Failed to save section", err));
     }
   }, [section, user]);
+
+  useEffect(() => {
+    localStorage.setItem('iimt_term', term);
+    
+    if (user) {
+      const token = localStorage.getItem('iimt_token');
+      axios.post(
+        `${API_BASE_URL}/api/user/term`,
+        { term },
+        { headers: { Authorization: `Bearer ${token}` } }
+      ).catch(err => console.error("Failed to save term", err));
+    }
+  }, [term, user]);
 
   useEffect(() => {
     if (isFirstSectionRender.current) {
@@ -285,7 +308,7 @@ function App() {
     setAttendanceData(null);
     setAttendanceFetchedSection(null);
     setAttendanceError('');
-  }, [section]);
+  }, [section, term]);
 
   const stopProgressPolling = () => {
     if (progressPollRef.current) {
@@ -608,7 +631,7 @@ function App() {
 
       const res = await axios.post(
         `${API_BASE_URL}/api/attendance/fetch`,
-        {},
+        { term },
         {
           headers: {
             Authorization: `Bearer ${token}`
@@ -2973,30 +2996,57 @@ function App() {
             Sync your live attendance directly from the OLT portal.
           </p>
 
-          <button
-            className="btn-submit"
-            onClick={fetchAttendance}
-            style={{ marginTop: '1rem' }}
-          >
-            Fetch Now
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px', marginTop: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Term:</span>
+                <select
+                  value={term}
+                  onChange={(e) => {
+                    setTerm(e.target.value);
+                    trackEvent('action', 'change_term', { to: e.target.value });
+                  }}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #ddd',
+                    background: '#fff',
+                    color: '#333',
+                    fontSize: '0.9rem',
+                    fontWeight: 600,
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="Term-I">Term-I</option>
+                  <option value="Term-II">Term-II</option>
+                </select>
+            </div>
+            
+            <div>
+                <button
+                  className="btn-submit"
+                  onClick={fetchAttendance}
+                >
+                  Fetch Now
+                </button>
 
-          <button
-            className="btn-cancel"
-            onClick={() => {
-              setShowCredsForm(true);
-              trackEvent(
-                'button_click',
-                'update_creds'
-              );
-            }}
-            style={{
-              marginTop: '1rem',
-              marginLeft: '10px'
-            }}
-          >
-            Update Credentials
-          </button>
+                <button
+                  className="btn-cancel"
+                  onClick={() => {
+                    setShowCredsForm(true);
+                    trackEvent(
+                      'button_click',
+                      'update_creds'
+                    );
+                  }}
+                  style={{
+                    marginLeft: '10px'
+                  }}
+                >
+                  Update Credentials
+                </button>
+            </div>
+          </div>
         </div>
       );
     }
@@ -3127,7 +3177,7 @@ function App() {
               >
                 We couldn't match your roll number in Section{' '}
                 {attendanceFetchedSection ||
-                  section}'s attendance records. This can happen if you recently browsed a different timetable section, or if your saved OLT credentials have changed.
+                  section}'s attendance records for {term}. This can happen if you recently browsed a different timetable section, selected a term with no scheduled classes, or if your saved OLT credentials have changed.
               </p>
             )}
 
@@ -3160,9 +3210,9 @@ function App() {
 
               <button
                 className="btn-cancel"
-                onClick={fetchAttendance}
+                onClick={() => setAttendanceData(null)}
               >
-                Try Again
+                Go Back
               </button>
 
               <button
@@ -3185,7 +3235,10 @@ function App() {
           style={{
             display: 'flex',
             justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '10px',
+            marginBottom: '10px'
           }}
         >
           <h2
@@ -3195,7 +3248,31 @@ function App() {
             Attendance Overview
           </h2>
 
-          <div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <select
+              value={term}
+              onChange={(e) => {
+                setTerm(e.target.value);
+                setAttendanceData(null);
+                trackEvent('action', 'change_term', { to: e.target.value });
+              }}
+              style={{
+                padding: '7px 12px',
+                borderRadius: '8px',
+                border: '1px solid #ddd',
+                background: '#fff',
+                color: '#333',
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+              disabled={isFetchingAttendance}
+            >
+              <option value="Term-I">Term-I</option>
+              <option value="Term-II">Term-II</option>
+            </select>
+            
             <button
               onClick={fetchAttendance}
               className="nav-btn"
@@ -7767,7 +7844,7 @@ export default App;
 //                 marginBottom: '2rem'
 //               }}
 //             >
-//               PGPM Term-I Portal
+//               PGPM Term-II Portal
 //             </p>
 
 //             <GoogleLogin
@@ -8779,7 +8856,7 @@ export default App;
 //           </div>
 
 //           <div className="brand-subtitle">
-//             PGPM Term-I
+//             PGPM Term-II
 //           </div>
 
 //           <div
