@@ -8,6 +8,7 @@ const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const cheerio = require('cheerio');
+const { google } = require('googleapis'); // Added for Google Drive API
 
 // Security middlewares
 const helmet = require('helmet');
@@ -835,8 +836,6 @@ async function completeScrape(client, section, username, res, userId) {
 // 4. EXCEL PARSING HELPER FUNCTIONS
 // ============================================================
 
-const SHEET_URL = 'https://docs.google.com/spreadsheets/d/17ZoeBXiOHRXK-zni4rUy41syf_dDk72f/export?format=xlsx&gid=55414638';
-
 const getCellText = (cell) => {
     if (!cell || cell.value === null || cell.value === undefined) return '';
     if (typeof cell.value === 'object') {
@@ -1010,8 +1009,9 @@ const extractSectionData = (workbook, section) => {
             const c2 = getCellText(row.getCell(2)).toLowerCase();
             const t1 = getCellText(row.getCell(targetCol)).toLowerCase();
 
-            if (c1.includes('sessions') || c2.includes('credits') || c1 === '20' || c1.includes('actual teaching') ||
-                t1.includes('sessions') || t1.includes('credits') || t1 === '20' || t1.includes('actual teaching')) {
+            // Updated for Term 2 summary format
+            if (c1.includes('course') || c2.includes('actual teaching') || c1.includes('actual teaching') ||
+                t1.includes('course') || t1.includes('actual teaching')) {
                 summaryStartIndex = rowNumber;
             }
         }
@@ -1107,20 +1107,19 @@ const extractSectionData = (workbook, section) => {
         });
 
         if (actualTeachingCol !== -1) {
-            summaryData.headers = ['Subject', 'Credits', 'Sessions', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
+            // Updated dynamically for Term 2 summary format
+            summaryData.headers = ['Course', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
             sheet.eachRow((row, rowNumber) => {
                 if (rowNumber > summaryStartIndex) {
-                    const sessions = getCellText(row.getCell(1));
-                    const credits = getCellText(row.getCell(2));
-                    const subject = getCellText(row.getCell(actualTeachingCol - 1));
+                    const course = getCellText(row.getCell(actualTeachingCol - 1));
                     const actualTeaching = getCellText(row.getCell(actualTeachingCol));
                     const preMid = getCellText(row.getCell(actualTeachingCol + 1));
                     const postMid = getCellText(row.getCell(actualTeachingCol + 2));
                     const guestSpeaker = getCellText(row.getCell(actualTeachingCol + 3));
                     const total = getCellText(row.getCell(actualTeachingCol + 4));
 
-                    if (subject && subject.trim() !== '' && !subject.toLowerCase().includes('class cancelled') && !subject.toLowerCase().includes('make up session')) {
-                        summaryData.rows.push([subject, credits, sessions, actualTeaching, preMid, postMid, guestSpeaker, total]);
+                    if (course && course.trim() !== '' && !course.toLowerCase().includes('class cancelled') && !course.toLowerCase().includes('make up session') && !course.toLowerCase().includes('course')) {
+                        summaryData.rows.push([course, actualTeaching, preMid, postMid, guestSpeaker, total]);
                     }
                 }
             });
@@ -1146,8 +1145,23 @@ const updateCache = async () => {
 
     activeFetchPromise = (async () => {
         try {
-            console.log("[Cache] Downloading and parsing Excel sheet...");
-            const response = await axios.get(SHEET_URL, { responseType: 'arraybuffer' });
+            console.log("[Cache] Downloading Term-II Excel sheet from Google Drive...");
+            
+            // This reads credentials.json. Ensure it's a Service Account JSON for smooth backend usage.
+            const auth = new google.auth.GoogleAuth({
+                keyFile: 'credentials.json',
+                scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+            });
+            const drive = google.drive({ version: 'v3', auth });
+
+            // Using the precise new File ID provided by your script
+            const fileId = '1-8A3GXCBJD-zRoCYRnhIXzMEjqsrqsU0';
+            
+            const response = await drive.files.get(
+                { fileId, alt: 'media' },
+                { responseType: 'arraybuffer' }
+            );
+
             const workbook = new ExcelJS.Workbook();
             await workbook.xlsx.load(response.data);
 
@@ -1159,10 +1173,10 @@ const updateCache = async () => {
 
             globalCache = newCache;
             lastFetchTime = Date.now();
-            console.log("[Cache] Successfully updated all sections in memory.");
+            console.log("[Cache] Successfully updated all Term-II sections in memory.");
             return globalCache;
         } catch (error) {
-            console.error("[Cache Error] Failed to fetch or parse Excel data:", error);
+            console.error("[Cache Error] Failed to fetch or parse Excel data from Drive:", error);
             throw error;
         } finally {
             isFetching = false;
@@ -1351,8 +1365,23 @@ app.listen(PORT, () => {
 // const AnalyticsEvent = mongoose.model('AnalyticsEvent', analyticsEventSchema);
 
 // // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
-// const ENCRYPTION_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'iimtrichy_fallback_secret', 'salt', 32);
 // const ALGORITHM = 'aes-256-cbc';
+
+// // The encryption key is derived from JWT_SECRET. If JWT_SECRET was ever unset
+// // (falling back to the hardcoded string below) and later set to a real value
+// // on the server, credentials saved *before* that change were encrypted under
+// // a different key than the one derived "now" — and would otherwise fail to
+// // decrypt forever, breaking OLT fetch for every existing user while newly
+// // saved credentials keep working fine. CANDIDATE_KEYS lists every key we
+// // should be able to read, newest/primary first, so old records still decrypt
+// // and get transparently migrated instead of silently breaking.
+// const CANDIDATE_SECRETS = [
+//     process.env.JWT_SECRET || 'iimtrichy_fallback_secret',
+//     'iimtrichy_fallback_secret',
+// ].filter((v, i, arr) => v && arr.indexOf(v) === i); // dedupe + drop falsy
+
+// const CANDIDATE_KEYS = CANDIDATE_SECRETS.map(secret => crypto.scryptSync(secret, 'salt', 32));
+// const ENCRYPTION_KEY = CANDIDATE_KEYS[0]; // primary key: used for all new/re- encryption
 
 // function encryptText(text) {
 //     if (!text) return '';
@@ -1363,15 +1392,40 @@ app.listen(PORT, () => {
 //     return `${iv.toString('hex')}:${encrypted}`;
 // }
 
+// function decryptWithKey(text, key) {
+//     const parts = text.split(':');
+//     if (parts.length !== 2) throw new Error('Malformed ciphertext');
+//     const iv = Buffer.from(parts[0], 'hex');
+//     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+//     let decrypted = decipher.update(parts[1], 'hex', 'utf8');
+//     decrypted += decipher.final('utf8');
+//     return decrypted;
+// }
+
+// // Tries every known key (current/primary first, then legacy fallbacks).
+// // Returns { plaintext, migrated } — migrated is true when a non-primary key
+// // was needed, so the caller can silently re-encrypt & persist under the
+// // primary key and avoid ever hitting the slow path again.
+// // Throws only if the ciphertext can't be read with ANY known key.
+// function decryptTextDetailed(text) {
+//     if (!text) return { plaintext: '', migrated: false };
+//     let lastErr = null;
+//     for (let i = 0; i < CANDIDATE_KEYS.length; i++) {
+//         try {
+//             const plaintext = decryptWithKey(text, CANDIDATE_KEYS[i]);
+//             return { plaintext, migrated: i > 0 };
+//         } catch (err) {
+//             lastErr = err;
+//         }
+//     }
+//     throw lastErr || new Error('Unable to decrypt with any known key');
+// }
+
+// // Backwards-compatible simple decrypt: returns '' on total failure instead
+// // of throwing (kept for any other callers that expect that behavior).
 // function decryptText(text) {
-//     if (!text) return '';
 //     try {
-//         const parts = text.split(':');
-//         const iv = Buffer.from(parts[0], 'hex');
-//         const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
-//         let decrypted = decipher.update(parts[1], 'hex', 'utf8');
-//         decrypted += decipher.final('utf8');
-//         return decrypted;
+//         return decryptTextDetailed(text).plaintext;
 //     } catch (err) {
 //         return '';
 //     }
@@ -1918,8 +1972,27 @@ app.listen(PORT, () => {
 //         }
         
 //         const username = user.oltUsername;
-//         const password = decryptText(user.oltPassword);
 //         const section = user.defaultSection || 'A';
+
+//         let password;
+//         try {
+//             const decrypted = decryptTextDetailed(user.oltPassword);
+//             password = decrypted.plaintext;
+//             if (decrypted.migrated) {
+//                 // Saved under an older key — silently re-encrypt under the
+//                 // current primary key so this user never hits this path again.
+//                 User.findByIdAndUpdate(userId, { oltPassword: encryptText(password) }).catch(() => {});
+//             }
+//         } catch (err) {
+//             // Genuinely unreadable under every known key — the only case
+//             // where we actually need the user to re-enter their password.
+//             setAttendanceProgress(userId, 0, 'Saved credentials could not be read.', 'error');
+//             clearAttendanceProgressSoon(userId);
+//             return res.status(400).json({
+//                 error: 'Your saved OLT credentials could not be read. Please re-enter and save them again.',
+//                 needsCredsReset: true
+//             });
+//         }
 
 //         setAttendanceProgress(userId, 0, 'Connecting to OLT portal…');
 
