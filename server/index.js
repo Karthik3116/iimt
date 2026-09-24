@@ -1139,39 +1139,82 @@ let isFetching = false;
 let activeFetchPromise = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+// const updateCache = async () => {
+//     if (isFetching) return activeFetchPromise;
+//     isFetching = true;
+
+//     activeFetchPromise = (async () => {
+//         try {
+//             console.log("[Cache] Downloading Term-II Excel sheet from Google Drive...");
+            
+//             // --- UPDATED GOOGLE AUTH LOGIC ---
+//             let authOptions = {
+//                 scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+//             };
+
+//             // Use Environment Variable in production (Render), fallback to file locally
+//             if (process.env.GOOGLE_CREDENTIALS) {
+//                 authOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+//             } else {
+//                 authOptions.keyFile = 'credentials.json';
+//             }
+
+//             const auth = new google.auth.GoogleAuth(authOptions);
+//             const drive = google.drive({ version: 'v3', auth });
+
+//             // Using the precise new File ID provided by your script
+//             const fileId = '1-8A3GXCBJD-zRoCYRnhIXzMEjqsrqsU0';
+            
+//             const response = await drive.files.get(
+//                 { fileId, alt: 'media' },
+//                 { responseType: 'arraybuffer' }
+//             );
+
+//             const workbook = new ExcelJS.Workbook();
+//             await workbook.xlsx.load(response.data);
+
+//             const newCache = {};
+//             for (const sec of ALL_SECTIONS) {
+//                 const data = extractSectionData(workbook, sec);
+//                 if (data) newCache[sec] = data;
+//             }
+
+//             globalCache = newCache;
+//             lastFetchTime = Date.now();
+//             console.log("[Cache] Successfully updated all Term-II sections in memory.");
+//             return globalCache;
+//         } catch (error) {
+//             console.error("[Cache Error] Failed to fetch or parse Excel data from Drive:", error);
+//             throw error;
+//         } finally {
+//             isFetching = false;
+//         }
+//     })();
+
+//     return activeFetchPromise;
+// };
+
+// ============================================================
+// 7. TIMETABLE API
+// ============================================================
+
+
 const updateCache = async () => {
     if (isFetching) return activeFetchPromise;
     isFetching = true;
 
     activeFetchPromise = (async () => {
         try {
-            console.log("[Cache] Downloading Term-II Excel sheet from Google Drive...");
+            console.log("[Cache] Downloading Term-II Excel sheet via Apps Script Bridge...");
             
-            // --- UPDATED GOOGLE AUTH LOGIC ---
-            let authOptions = {
-                scopes: ['https://www.googleapis.com/auth/drive.readonly'],
-            };
-
-            // Use Environment Variable in production (Render), fallback to file locally
-            if (process.env.GOOGLE_CREDENTIALS) {
-                authOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-            } else {
-                authOptions.keyFile = 'credentials.json';
-            }
-
-            const auth = new google.auth.GoogleAuth(authOptions);
-            const drive = google.drive({ version: 'v3', auth });
-
-            // Using the precise new File ID provided by your script
-            const fileId = '1-8A3GXCBJD-zRoCYRnhIXzMEjqsrqsU0';
+            const bridgeUrl = "https://script.google.com/macros/s/AKfycbzqdMacopeFnXZmc9MgnN2cdTyZjIqCbMyDUQvx6VAMounnDswc88hmu5vOmhLZSmTfgw/exec";
+            const response = await axios.get(bridgeUrl, { responseType: 'text' });
             
-            const response = await drive.files.get(
-                { fileId, alt: 'media' },
-                { responseType: 'arraybuffer' }
-            );
+            // Convert the base64 string from the bridge back into a raw file buffer
+            const buffer = Buffer.from(response.data, 'base64');
 
             const workbook = new ExcelJS.Workbook();
-            await workbook.xlsx.load(response.data);
+            await workbook.xlsx.load(buffer);
 
             const newCache = {};
             for (const sec of ALL_SECTIONS) {
@@ -1184,7 +1227,7 @@ const updateCache = async () => {
             console.log("[Cache] Successfully updated all Term-II sections in memory.");
             return globalCache;
         } catch (error) {
-            console.error("[Cache Error] Failed to fetch or parse Excel data from Drive:", error);
+            console.error("[Cache Error] Failed to fetch or parse Excel data from Bridge:", error.message);
             throw error;
         } finally {
             isFetching = false;
@@ -1193,10 +1236,6 @@ const updateCache = async () => {
 
     return activeFetchPromise;
 };
-
-// ============================================================
-// 7. TIMETABLE API
-// ============================================================
 
 app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     const section = req.params.section.toUpperCase();
