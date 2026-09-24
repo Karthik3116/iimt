@@ -19,6 +19,10 @@ const xss = require('xss-clean');
 const app = express();
 
 // --- SECURITY MIDDLEWARE ---
+
+// Fix for express-rate-limit X-Forwarded-For warning behind proxies (like Render)
+app.set('trust proxy', 1);
+
 app.use(helmet());
 app.use(cors({
     origin: process.env.FRONTEND_URL || '*',
@@ -271,7 +275,7 @@ app.post('/api/user/section', authenticateUser, async (req, res) => {
         const user = await User.findByIdAndUpdate(
             req.user.id,
             { defaultSection: String(section).toUpperCase() },
-            { new: true }
+            { returnDocument: 'after' } // FIXED deprecation warning
         ).select('-__v');
         res.json({ success: true, user });
     } catch (error) {
@@ -288,7 +292,7 @@ app.post('/api/user/term', authenticateUser, async (req, res) => {
         const user = await User.findByIdAndUpdate(
             req.user.id,
             { defaultTerm: term },
-            { new: true }
+            { returnDocument: 'after' } // FIXED deprecation warning
         ).select('-__v');
         res.json({ success: true, user });
     } catch (error) {
@@ -469,7 +473,7 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
             await Todo.findOneAndUpdate(
                 { userEmail: email, date, section, subject },
                 { tasks },
-                { upsert: true, returnDocument: 'after' }
+                { upsert: true, returnDocument: 'after' } // Already using the right parameter here
             );
         }
         res.json({ success: true });
@@ -617,8 +621,7 @@ function parseFullForm(html) {
 
         if (name) {
             data[name] =
-                $(el).find('option[selected]').attr('value') ||
-                $(el).find('option').first().attr('value') ||
+                $(el).find('option[selected]').attr('value') ||$(el).find('option').first().attr('value') ||
                 '';
         }
     });
@@ -1223,7 +1226,10 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 // 8. SELF-PING & DAEMON
 // ============================================================
 
-const PING_URL = process.env.PING_URL || "http://localhost:5000";
+const PORT = process.env.PORT || 5000;
+// FIX: Force explicitly binding loopback IPv4 instead of 'localhost' to prevent Node.js 18+ from 
+// resolving to ::1 (IPv6) which leads to ECONNREFUSED errors.
+const PING_URL = process.env.PING_URL || `http://127.0.0.1:${PORT}`;
 let pingCount = 0;
 
 const pingServer = async () => {
@@ -1237,7 +1243,6 @@ const pingServer = async () => {
 };
 
 const PING_INTERVAL_MS = 240000;
-const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
@@ -1319,6 +1324,7 @@ app.listen(PORT, () => {
 //     email: { type: String, unique: true, required: true },
 //     picture: String,
 //     defaultSection: { type: String, enum: ALL_SECTIONS, default: 'A' },
+//     defaultTerm: { type: String, enum: ['Term-I', 'Term-II'], default: 'Term-II' }, // Added Term Preference
 //     lastActive: { type: Date, default: Date.now },
 //     createdAt: { type: Date, default: Date.now },
 //     oltUsername: { type: String, default: '' },
@@ -1368,14 +1374,6 @@ app.listen(PORT, () => {
 // // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
 // const ALGORITHM = 'aes-256-cbc';
 
-// // The encryption key is derived from JWT_SECRET. If JWT_SECRET was ever unset
-// // (falling back to the hardcoded string below) and later set to a real value
-// // on the server, credentials saved *before* that change were encrypted under
-// // a different key than the one derived "now" — and would otherwise fail to
-// // decrypt forever, breaking OLT fetch for every existing user while newly
-// // saved credentials keep working fine. CANDIDATE_KEYS lists every key we
-// // should be able to read, newest/primary first, so old records still decrypt
-// // and get transparently migrated instead of silently breaking.
 // const CANDIDATE_SECRETS = [
 //     process.env.JWT_SECRET || 'iimtrichy_fallback_secret',
 //     'iimtrichy_fallback_secret',
@@ -1403,11 +1401,6 @@ app.listen(PORT, () => {
 //     return decrypted;
 // }
 
-// // Tries every known key (current/primary first, then legacy fallbacks).
-// // Returns { plaintext, migrated } — migrated is true when a non-primary key
-// // was needed, so the caller can silently re-encrypt & persist under the
-// // primary key and avoid ever hitting the slow path again.
-// // Throws only if the ciphertext can't be read with ANY known key.
 // function decryptTextDetailed(text) {
 //     if (!text) return { plaintext: '', migrated: false };
 //     let lastErr = null;
@@ -1422,8 +1415,6 @@ app.listen(PORT, () => {
 //     throw lastErr || new Error('Unable to decrypt with any known key');
 // }
 
-// // Backwards-compatible simple decrypt: returns '' on total failure instead
-// // of throwing (kept for any other callers that expect that behavior).
 // function decryptText(text) {
 //     try {
 //         return decryptTextDetailed(text).plaintext;
@@ -1439,7 +1430,6 @@ app.listen(PORT, () => {
 
 // // --- AUTHENTICATION & TRAFFIC MIDDLEWARE ---
 // app.use((req, res, next) => {
-//     // Log API Traffic (exclude admin/analytics endpoints to avoid noise)
 //     if (req.path.startsWith('/api') && !req.path.includes('/admin') && !req.path.includes('/analytics') && !req.path.includes('/attendance/progress')) {
 //         TrafficLog.create({ endpoint: req.path, method: req.method }).catch(() => {});
 //     }
@@ -1542,6 +1532,23 @@ app.listen(PORT, () => {
 //     }
 // });
 
+// app.post('/api/user/term', authenticateUser, async (req, res) => {
+//     const { term } = req.body;
+//     if (!term || !['Term-I', 'Term-II'].includes(term)) {
+//         return res.status(400).json({ error: 'Invalid term.' });
+//     }
+//     try {
+//         const user = await User.findByIdAndUpdate(
+//             req.user.id,
+//             { defaultTerm: term },
+//             { new: true }
+//         ).select('-__v');
+//         res.json({ success: true, user });
+//     } catch (error) {
+//         res.status(500).json({ error: 'Server error saving term preference.' });
+//     }
+// });
+
 // app.post('/api/user/olt-credentials', authenticateUser, async (req, res) => {
 //     try {
 //         const { username, password } = req.body;
@@ -1600,10 +1607,8 @@ app.listen(PORT, () => {
 //         const feedbacks = await Feedback.find().sort({ createdAt: -1 });
 //         const users = await User.find().sort({ lastActive: -1 }).select('-__v -oltPassword');
         
-//         // Count users who have successfully saved their OLT credentials
 //         const oltUsersCount = await User.countDocuments({ oltUsername: { $exists: true, $ne: '' } });
 
-//         // Analytics: Daily Active Users (Last 7 days)
 //         const dauData = await AnalyticsEvent.aggregate([
 //             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
 //             { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, uniqueUsers: { $addToSet: "$userEmail" } } },
@@ -1611,7 +1616,6 @@ app.listen(PORT, () => {
 //             { $sort: { date: 1 } }
 //         ]);
 
-//         // Analytics: Server Traffic (Last 7 days)
 //         const trafficData = await TrafficLog.aggregate([
 //             { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
 //             { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, hits: { $sum: 1 } } },
@@ -1619,14 +1623,12 @@ app.listen(PORT, () => {
 //             { $sort: { date: 1 } }
 //         ]);
 
-//         // Analytics: Feature Usage
 //         const featureUsage = await AnalyticsEvent.aggregate([
 //             { $match: { eventType: 'tab_click' } },
 //             { $group: { _id: "$eventName", clicks: { $sum: 1 } } },
 //             { $sort: { clicks: -1 } }
 //         ]);
 
-//         // Analytics: Button Clicks
 //         const interactions = await AnalyticsEvent.aggregate([
 //             { $match: { eventType: 'button_click' } },
 //             { $group: { _id: "$eventName", count: { $sum: 1 } } },
@@ -1652,7 +1654,6 @@ app.listen(PORT, () => {
 //     }
 // });
 
-// // --- NEW: USER SPECIFIC ANALYTICS ENDPOINT ---
 // app.post('/api/admin/user-details', strictLimiter, async (req, res) => {
 //     const { password, email } = req.body;
 //     if (password !== ADMIN_PASSWORD) {
@@ -1663,7 +1664,6 @@ app.listen(PORT, () => {
 //         const user = await User.findOne({ email }).select('-__v -oltPassword');
 //         if (!user) return res.status(404).json({ error: "User not found" });
 
-//         // Generate 7-day activity graph specifically for this user
 //         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         
 //         const activityRaw = await AnalyticsEvent.aggregate([
@@ -1675,7 +1675,6 @@ app.listen(PORT, () => {
 //             { $sort: { _id: 1 } }
 //         ]);
 
-//         // Fetch last 150 events to construct timeline session history
 //         const recentEventsRaw = await AnalyticsEvent.find({ userEmail: email })
 //             .sort({ timestamp: -1 })
 //             .limit(150);
@@ -1691,7 +1690,6 @@ app.listen(PORT, () => {
 //         res.status(500).json({ error: "Server error fetching user details." });
 //     }
 // });
-
 
 // app.get('/api/todos', authenticateUser, async (req, res) => {
 //     try {
@@ -1743,23 +1741,39 @@ app.listen(PORT, () => {
 // const LOGIN_URL = `${BASE_URL}/Default.aspx`;
 // const ATTENDANCE_URL = `${BASE_URL}/SubjectAttendance`;
 
-// const SUBJECTS = [
-//     "Business Statistics", "Financial Reporting and Analysis", "Managerial Communication", 
-//     "Managerial Economics", "Marketing Management -I", "Micro Organizational Behaviour"
-// ];
+// const TERMS = {
+//     "Term-I": [
+//         "Business Statistics", 
+//         "Financial Reporting and Analysis", 
+//         "Managerial Communication", 
+//         "Managerial Economics", 
+//         "Marketing Management -I", 
+//         "Micro Organizational Behaviour"
+//     ],
+//     "Term-II": [
+//         "Business Ethics", //
+//         "Corporate Finance", //
+//         "Information Systems for Managers", //
+//         "Macro Economics for Managers", //
+//         "Macro Organizational Behaviour", //
+//         "Marketing Management-II", //
+//         "Operations Research for Managers", //
+//         "The Entrepreneurial Manager" //
+//     ]
+// };
 
 // // ============================================================
 // // ATTENDANCE FETCH PROGRESS TRACKING (in-memory, per-user)
 // // ============================================================
-// // Total steps: 1 (connect) + 1 (load report module) + SUBJECTS.length (one per subject)
-// const ATTENDANCE_PROGRESS_TOTAL = SUBJECTS.length + 2;
 // const attendanceProgress = new Map();
 
-// function setAttendanceProgress(userId, step, message, status = 'in_progress') {
+// function setAttendanceProgress(userId, step, message, status = 'in_progress', total = 8) {
 //     if (!userId) return;
+//     const current = attendanceProgress.get(String(userId));
+//     const progressTotal = total || (current ? current.total : 8);
 //     attendanceProgress.set(String(userId), {
 //         step,
-//         total: ATTENDANCE_PROGRESS_TOTAL,
+//         total: progressTotal,
 //         message,
 //         status,
 //         timestamp: Date.now()
@@ -1771,7 +1785,6 @@ app.listen(PORT, () => {
 //     setTimeout(() => attendanceProgress.delete(String(userId)), 15000);
 // }
 
-// // Clean up stale progress entries so the map doesn't grow unbounded
 // setInterval(() => {
 //     const now = Date.now();
 //     for (const [id, progress] of attendanceProgress.entries()) {
@@ -1782,7 +1795,7 @@ app.listen(PORT, () => {
 // app.get('/api/attendance/progress', authenticateUser, (req, res) => {
 //     const progress = attendanceProgress.get(String(req.user.id)) || {
 //         step: 0,
-//         total: ATTENDANCE_PROGRESS_TOTAL,
+//         total: 8,
 //         message: 'Waiting to start…',
 //         status: 'idle'
 //     };
@@ -1839,18 +1852,30 @@ app.listen(PORT, () => {
 // function parseFullForm(html) {
 //     const $ = cheerio.load(html);
 //     const data = {};
+
 //     $('input').each((i, el) => {
 //         const name = $(el).attr('name');
 //         if (!name) return;
+
 //         const type = ($(el).attr('type') || 'text').toLowerCase();
+
 //         if (['submit', 'button', 'reset', 'image'].includes(type)) return;
 //         if (['checkbox', 'radio'].includes(type) && !$(el).is(':checked')) return;
+
 //         data[name] = $(el).attr('value') || '';
 //     });
+
 //     $('select').each((i, el) => {
 //         const name = $(el).attr('name');
-//         if (name) data[name] = $(el).find('option[selected]').attr('value') || $(el).find('option').first().attr('value') || '';
+
+//         if (name) {
+//             data[name] =
+//                 $(el).find('option[selected]').attr('value') ||
+//                 $(el).find('option').first().attr('value') ||
+//                 '';
+//         }
 //     });
+
 //     return data;
 // }
 
@@ -1920,8 +1945,7 @@ app.listen(PORT, () => {
     
 //     for (let i = 2; i < headerCells.length - 2; i++) {
 //         const htmlContent = $(headerCells[i]).html() || '';
-//         const $cell = cheerio.load(htmlContent);
-//         $cell('br').replaceWith('\n');
+//         const $cell = cheerio.load(htmlContent);$cell('br').replaceWith('\n');
         
 //         const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
         
@@ -1974,20 +1998,19 @@ app.listen(PORT, () => {
         
 //         const username = user.oltUsername;
 //         const section = user.defaultSection || 'A';
+//         const term = req.body.term || user.defaultTerm || 'Term-II';
+//         const subjects = TERMS[term] || TERMS["Term-II"];
+//         const totalSteps = subjects.length + 2;
 
 //         let password;
 //         try {
 //             const decrypted = decryptTextDetailed(user.oltPassword);
 //             password = decrypted.plaintext;
 //             if (decrypted.migrated) {
-//                 // Saved under an older key — silently re-encrypt under the
-//                 // current primary key so this user never hits this path again.
 //                 User.findByIdAndUpdate(userId, { oltPassword: encryptText(password) }).catch(() => {});
 //             }
 //         } catch (err) {
-//             // Genuinely unreadable under every known key — the only case
-//             // where we actually need the user to re-enter their password.
-//             setAttendanceProgress(userId, 0, 'Saved credentials could not be read.', 'error');
+//             setAttendanceProgress(userId, 0, 'Saved credentials could not be read.', 'error', totalSteps);
 //             clearAttendanceProgressSoon(userId);
 //             return res.status(400).json({
 //                 error: 'Your saved OLT credentials could not be read. Please re-enter and save them again.',
@@ -1995,7 +2018,7 @@ app.listen(PORT, () => {
 //             });
 //         }
 
-//         setAttendanceProgress(userId, 0, 'Connecting to OLT portal…');
+//         setAttendanceProgress(userId, 0, 'Connecting to OLT portal…', 'in_progress', totalSteps);
 
 //         const client = new OLTClient();
 //         const initial = await client.get(LOGIN_URL);
@@ -2011,47 +2034,44 @@ app.listen(PORT, () => {
 //         state['__LASTFOCUS'] = '';
 //         state['__ASYNCPOST'] = 'true';
 
-//         setAttendanceProgress(userId, 1, 'Verifying your credentials…');
+//         setAttendanceProgress(userId, 1, 'Verifying your credentials…', 'in_progress', totalSteps);
 //         const loginRes = await client.post(LOGIN_URL, state, { 'X-MicrosoftAjax': 'Delta=true', 'Referer': LOGIN_URL });
 //         const text = loginRes.data;
 
 //         if (!text.includes('pageRedirect||')) {
-//             setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error');
+//             setAttendanceProgress(userId, 0, 'Invalid OLT credentials.', 'error', totalSteps);
 //             clearAttendanceProgressSoon(userId);
-//             // Use 400 (not 401) here — 401 is reserved for this app's own auth token.
-//             // The global axios interceptor logs the user out of the whole app on any 401,
-//             // so an OLT-side credential failure must never reuse that status code.
 //             return res.status(400).json({ error: 'Invalid OLT Credentials' });
 //         }
 
-//         return await completeScrape(client, section, username, res, userId);
+//         return await completeScrape(client, section, username, res, userId, term, subjects, totalSteps);
 //     } catch (error) {
 //         console.error(error);
-//         setAttendanceProgress(userId, 0, 'Error connecting to OLT portal.', 'error');
+//         setAttendanceProgress(userId, 0, 'Error connecting to OLT portal.', 'error', 8);
 //         clearAttendanceProgressSoon(userId);
 //         res.status(500).json({ error: 'Error connecting to OLT portal' });
 //     }
 // });
 
-// async function completeScrape(client, section, username, res, userId) {
+// async function completeScrape(client, section, username, res, userId, term, subjects, totalSteps) {
 //     try {
-//         setAttendanceProgress(userId, 2, 'Loading your attendance report…');
+//         setAttendanceProgress(userId, 2, 'Loading your attendance report…', 'in_progress', totalSteps);
 //         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
 //         const state = parseFullForm(attendanceRes.data);
         
-//         const PROGRAM = "PGPM 2026-28", TERM = "Term-I";
+//         const PROGRAM = "PGPM 2026-28", TERM_VAL = term;
 //         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName'] !== PROGRAM) {
 //             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName', PROGRAM);
 //         }
             
-//         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM) {
-//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM);
+//         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM_VAL) {
+//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM_VAL);
 //         }
 
 //         const results = {};
-//         for (let i = 0; i < SUBJECTS.length; i++) {
-//             const subject = SUBJECTS[i];
-//             setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${SUBJECTS.length})…`);
+//         for (let i = 0; i < subjects.length; i++) {
+//             const subject = subjects[i];
+//             setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${subjects.length})…`, 'in_progress', totalSteps);
 
 //             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
 //             const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
@@ -2065,16 +2085,17 @@ app.listen(PORT, () => {
 //         const hasAnyRecord = Object.values(results).some(sub => sub.total > 0);
 //         setAttendanceProgress(
 //             userId,
-//             ATTENDANCE_PROGRESS_TOTAL,
+//             totalSteps,
 //             hasAnyRecord ? 'Done!' : 'Finished, but no matching records were found.',
-//             'done'
+//             'done',
+//             totalSteps
 //         );
 //         clearAttendanceProgressSoon(userId);
 
-//         res.json({ success: true, results, section });
+//         res.json({ success: true, results, section, term });
 //     } catch (error) {
 //         console.error("Scrape Error:", error);
-//         setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error');
+//         setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error', totalSteps);
 //         clearAttendanceProgressSoon(userId);
 //         res.status(500).json({ error: 'Failed to extract attendance data' });
 //     }
@@ -2257,7 +2278,6 @@ app.listen(PORT, () => {
 //             const c2 = getCellText(row.getCell(2)).toLowerCase();
 //             const t1 = getCellText(row.getCell(targetCol)).toLowerCase();
 
-//             // Updated for Term 2 summary format
 //             if (c1.includes('course') || c2.includes('actual teaching') || c1.includes('actual teaching') ||
 //                 t1.includes('course') || t1.includes('actual teaching')) {
 //                 summaryStartIndex = rowNumber;
@@ -2355,7 +2375,6 @@ app.listen(PORT, () => {
 //         });
 
 //         if (actualTeachingCol !== -1) {
-//             // Updated dynamically for Term 2 summary format
 //             summaryData.headers = ['Course', 'Actual Teaching', 'Pre-Mid', 'Post-Mid', 'Guest Speaker', 'Total'];
 //             sheet.eachRow((row, rowNumber) => {
 //                 if (rowNumber > summaryStartIndex) {
@@ -2387,8 +2406,6 @@ app.listen(PORT, () => {
 // let activeFetchPromise = null;
 // const CACHE_TTL_MS = 5 * 60 * 1000;
 
-
-
 // const updateCache = async () => {
 //     if (isFetching) return activeFetchPromise;
 //     isFetching = true;
@@ -2400,7 +2417,6 @@ app.listen(PORT, () => {
 //             const bridgeUrl = "https://script.google.com/macros/s/AKfycbzqdMacopeFnXZmc9MgnN2cdTyZjIqCbMyDUQvx6VAMounnDswc88hmu5vOmhLZSmTfgw/exec";
 //             const response = await axios.get(bridgeUrl, { responseType: 'text' });
             
-//             // Convert the base64 string from the bridge back into a raw file buffer
 //             const buffer = Buffer.from(response.data, 'base64');
 
 //             const workbook = new ExcelJS.Workbook();
