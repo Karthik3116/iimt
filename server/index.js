@@ -1147,11 +1147,19 @@ const updateCache = async () => {
         try {
             console.log("[Cache] Downloading Term-II Excel sheet from Google Drive...");
             
-            // This reads credentials.json. Ensure it's a Service Account JSON for smooth backend usage.
-            const auth = new google.auth.GoogleAuth({
-                keyFile: 'credentials.json',
+            // --- UPDATED GOOGLE AUTH LOGIC ---
+            let authOptions = {
                 scopes: ['https://www.googleapis.com/auth/drive.readonly'],
-            });
+            };
+
+            // Use Environment Variable in production (Render), fallback to file locally
+            if (process.env.GOOGLE_CREDENTIALS) {
+                authOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+            } else {
+                authOptions.keyFile = 'credentials.json';
+            }
+
+            const auth = new google.auth.GoogleAuth(authOptions);
             const drive = google.drive({ version: 'v3', auth });
 
             // Using the precise new File ID provided by your script
