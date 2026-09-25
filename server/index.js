@@ -1229,7 +1229,7 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 const PORT = process.env.PORT || 5000;
 // Set this to your external production URL (e.g., https://your-app.onrender.com)
 // to ensure external traffic keeps the instance awake.
-const PING_URL = process.env.PING_URL || `https://iimt-backend.onrender.com`;
+const PING_URL = process.env.PING_URL || `https://iimt-7iy6.onrender.com`;
 let pingCount = 0;
 
 const pingServer = async () => {
