@@ -46,8 +46,8 @@ app.use(mongoSanitize());
 app.use(xss());
 
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 150,
+    windowMs: 150 * 600 * 1000,
+    max: 1500,
     message: { error: "Too many requests from this IP, please try again after 15 minutes." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -55,8 +55,8 @@ const globalLimiter = rateLimit({
 app.use('/api', globalLimiter);
 
 const strictLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    max: 15,
+    windowMs: 60 * 60 * 10000,
+    max: 150,
     message: { error: "Too many authorization attempts from this IP, please try again after an hour." }
 });
 
