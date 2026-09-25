@@ -1207,7 +1207,7 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
         if (!forceRefresh && globalCache[section] && (Date.now() - lastFetchTime < CACHE_TTL_MS)) {
             return res.json({ ...globalCache[section], meta: buildMeta() });
         }
-        await updateCache();
+        await updateCache(); // Triggers on-demand parsing instead of continuous background parsing
         if (globalCache[section]) {
             return res.json({ ...globalCache[section], meta: buildMeta() });
         } else {
@@ -1227,9 +1227,9 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 // ============================================================
 
 const PORT = process.env.PORT || 5000;
-// FIX: Force explicitly binding loopback IPv4 instead of 'localhost' to prevent Node.js 18+ from 
-// resolving to ::1 (IPv6) which leads to ECONNREFUSED errors.
-const PING_URL = process.env.PING_URL || `http://127.0.0.1:${PORT}`;
+// Set this to your external production URL (e.g., https://your-app.onrender.com)
+// to ensure external traffic keeps the instance awake.
+const PING_URL = process.env.PING_URL || `https://iimt-backend.onrender.com`;
 let pingCount = 0;
 
 const pingServer = async () => {
@@ -1246,8 +1246,14 @@ const PING_INTERVAL_MS = 240000;
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    
+    // 1. Initialize cache once on startup
     updateCache().catch(console.error);
-    setInterval(updateCache, CACHE_TTL_MS);
+    
+    // ❌ REMOVED: setInterval(updateCache, CACHE_TTL_MS);
+    // Caching is now lazy/on-demand via the /api/timetable endpoint to prevent OOM crashes.
+
+    // 2. Keep the instance awake using external public URL ping
     setInterval(pingServer, PING_INTERVAL_MS);
 });
 
@@ -1272,6 +1278,10 @@ app.listen(PORT, () => {
 // const app = express();
 
 // // --- SECURITY MIDDLEWARE ---
+
+// // Fix for express-rate-limit X-Forwarded-For warning behind proxies (like Render)
+// app.set('trust proxy', 1);
+
 // app.use(helmet());
 // app.use(cors({
 //     origin: process.env.FRONTEND_URL || '*',
@@ -1524,7 +1534,7 @@ app.listen(PORT, () => {
 //         const user = await User.findByIdAndUpdate(
 //             req.user.id,
 //             { defaultSection: String(section).toUpperCase() },
-//             { new: true }
+//             { returnDocument: 'after' } // FIXED deprecation warning
 //         ).select('-__v');
 //         res.json({ success: true, user });
 //     } catch (error) {
@@ -1541,7 +1551,7 @@ app.listen(PORT, () => {
 //         const user = await User.findByIdAndUpdate(
 //             req.user.id,
 //             { defaultTerm: term },
-//             { new: true }
+//             { returnDocument: 'after' } // FIXED deprecation warning
 //         ).select('-__v');
 //         res.json({ success: true, user });
 //     } catch (error) {
@@ -1722,7 +1732,7 @@ app.listen(PORT, () => {
 //             await Todo.findOneAndUpdate(
 //                 { userEmail: email, date, section, subject },
 //                 { tasks },
-//                 { upsert: true, returnDocument: 'after' }
+//                 { upsert: true, returnDocument: 'after' } // Already using the right parameter here
 //             );
 //         }
 //         res.json({ success: true });
@@ -1870,8 +1880,7 @@ app.listen(PORT, () => {
 
 //         if (name) {
 //             data[name] =
-//                 $(el).find('option[selected]').attr('value') ||
-//                 $(el).find('option').first().attr('value') ||
+//                 $(el).find('option[selected]').attr('value') ||$(el).find('option').first().attr('value') ||
 //                 '';
 //         }
 //     });
@@ -2476,7 +2485,10 @@ app.listen(PORT, () => {
 // // 8. SELF-PING & DAEMON
 // // ============================================================
 
-// const PING_URL = process.env.PING_URL || "http://localhost:5000";
+// const PORT = process.env.PORT || 5000;
+// // FIX: Force explicitly binding loopback IPv4 instead of 'localhost' to prevent Node.js 18+ from 
+// // resolving to ::1 (IPv6) which leads to ECONNREFUSED errors.
+// const PING_URL = process.env.PING_URL || `http://127.0.0.1:${PORT}`;
 // let pingCount = 0;
 
 // const pingServer = async () => {
@@ -2490,7 +2502,6 @@ app.listen(PORT, () => {
 // };
 
 // const PING_INTERVAL_MS = 240000;
-// const PORT = process.env.PORT || 5000;
 
 // app.listen(PORT, () => {
 //     console.log(`Server running on port ${PORT}`);
