@@ -1153,7 +1153,7 @@ let globalCache = {};
 let lastFetchTime = 0;
 let isFetching = false;
 let activeFetchPromise = null;
-const CACHE_TTL_MS = 10 * 60 * 1000; // 3 minutes
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const updateCache = async () => {
     if (isFetching) return activeFetchPromise;
@@ -1219,12 +1219,12 @@ const runBackgroundDaemon = async () => {
     } catch (e) {
         console.error("Daemon error:", e.message);
     } finally {
-        // Wait strictly 3 minutes AFTER the previous run finishes and memory is cleared
+        // Wait strictly configured time AFTER the previous run finishes and memory is cleared
         setTimeout(runBackgroundDaemon, CACHE_TTL_MS);
     }
 };
 
-// --- ENDPOINT: Instant Return ---
+// --- REFACTORED ENDPOINT: ETag Caching for Massive Bandwidth Savings ---
 app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     const section = req.params.section.toUpperCase();
     const forceRefresh = req.query.force === 'true';
@@ -1236,28 +1236,43 @@ app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
     });
 
     try {
-        // 1. If user forces a refresh via the Sync button, make them wait for the latest
+        // 1. If user forces a refresh via the Sync button
         if (forceRefresh) {
             await updateCache();
             return res.json({ ...globalCache[section], meta: buildMeta() });
         }
 
-        // 2. Return instantly from RAM. The Safe Daemon guarantees it is fresh (<= 3 mins old)
+        // 2. Return instantly from RAM, leveraging HTTP ETags to save Bandwidth
         if (globalCache[section]) {
+            // Use lastFetchTime as a strict version identifier
+            const eTag = `W/"${lastFetchTime}"`;
+            res.setHeader('ETag', eTag);
+            
+            // Let the browser confidently hold this data for 1 minute before even bothering the server again
+            res.setHeader('Cache-Control', 'public, max-age=60'); 
+
+            if (req.headers['if-none-match'] === eTag) {
+                // Return 304 (Not Modified). This saves transferring the 100kb+ JSON payload entirely.
+                return res.status(304).end();
+            }
+
             return res.json({ ...globalCache[section], meta: buildMeta() });
         }
 
-        // 3. First boot only: If RAM is completely empty, user waits.
+        // 3. First boot only: If server just woke up and RAM is completely empty, user waits.
         console.log(`[Cache] Empty memory. User must wait for initial download.`);
         await updateCache();
         
         if (globalCache[section]) {
+            const eTag = `W/"${lastFetchTime}"`;
+            res.setHeader('ETag', eTag);
             return res.json({ ...globalCache[section], meta: buildMeta() });
         } else {
             return res.status(404).json({ error: `Section ${section} not found in ERP data.` });
         }
 
     } catch (error) {
+        // Last-resort fallback to serve stale data if background update crashes during a boot
         if (globalCache[section]) {
             return res.json({ ...globalCache[section], meta: buildMeta() });
         }
@@ -1295,7 +1310,6 @@ app.listen(PORT, () => {
     // Keeps the instance alive
     setInterval(pingServer, PING_INTERVAL_MS);
 });
-
 // require("dotenv").config();
 // const express = require('express');
 // const cors = require('cors');
@@ -1306,7 +1320,7 @@ app.listen(PORT, () => {
 // const jwt = require('jsonwebtoken');
 // const crypto = require('crypto');
 // const cheerio = require('cheerio');
-// const { google } = require('googleapis'); // Added for Google Drive API
+// const { google } = require('googleapis'); 
 
 // // Security middlewares
 // const helmet = require('helmet');
@@ -1318,7 +1332,6 @@ app.listen(PORT, () => {
 
 // // --- SECURITY MIDDLEWARE ---
 
-// // Fix for express-rate-limit X-Forwarded-For warning behind proxies (like Render)
 // app.set('trust proxy', 1);
 
 // app.use(helmet());
@@ -1373,7 +1386,7 @@ app.listen(PORT, () => {
 //     email: { type: String, unique: true, required: true },
 //     picture: String,
 //     defaultSection: { type: String, enum: ALL_SECTIONS, default: 'A' },
-//     defaultTerm: { type: String, enum: ['Term-I', 'Term-II'], default: 'Term-II' }, // Added Term Preference
+//     defaultTerm: { type: String, enum: ['Term-I', 'Term-II'], default: 'Term-II' }, 
 //     lastActive: { type: Date, default: Date.now },
 //     createdAt: { type: Date, default: Date.now },
 //     oltUsername: { type: String, default: '' },
@@ -1407,16 +1420,16 @@ app.listen(PORT, () => {
 // const trafficLogSchema = new mongoose.Schema({
 //     endpoint: String,
 //     method: String,
-//     timestamp: { type: Date, default: Date.now, expires: '30d' } // Auto-delete after 30 days
+//     timestamp: { type: Date, default: Date.now, expires: '30d' } 
 // });
 // const TrafficLog = mongoose.model('TrafficLog', trafficLogSchema);
 
 // const analyticsEventSchema = new mongoose.Schema({
 //     userEmail: String,
-//     eventType: String, // e.g., 'click', 'view', 'action', 'auth'
-//     eventName: String, // e.g., 'tab_attendance', 'btn_sync', 'login'
+//     eventType: String, 
+//     eventName: String, 
 //     metadata: mongoose.Schema.Types.Mixed,
-//     timestamp: { type: Date, default: Date.now, expires: '90d' } // Auto-delete after 90 days
+//     timestamp: { type: Date, default: Date.now, expires: '90d' } 
 // });
 // const AnalyticsEvent = mongoose.model('AnalyticsEvent', analyticsEventSchema);
 
@@ -1426,10 +1439,10 @@ app.listen(PORT, () => {
 // const CANDIDATE_SECRETS = [
 //     process.env.JWT_SECRET || 'iimtrichy_fallback_secret',
 //     'iimtrichy_fallback_secret',
-// ].filter((v, i, arr) => v && arr.indexOf(v) === i); // dedupe + drop falsy
+// ].filter((v, i, arr) => v && arr.indexOf(v) === i); 
 
 // const CANDIDATE_KEYS = CANDIDATE_SECRETS.map(secret => crypto.scryptSync(secret, 'salt', 32));
-// const ENCRYPTION_KEY = CANDIDATE_KEYS[0]; // primary key: used for all new/re- encryption
+// const ENCRYPTION_KEY = CANDIDATE_KEYS[0]; 
 
 // function encryptText(text) {
 //     if (!text) return '';
@@ -1573,7 +1586,7 @@ app.listen(PORT, () => {
 //         const user = await User.findByIdAndUpdate(
 //             req.user.id,
 //             { defaultSection: String(section).toUpperCase() },
-//             { returnDocument: 'after' } // FIXED deprecation warning
+//             { returnDocument: 'after' } 
 //         ).select('-__v');
 //         res.json({ success: true, user });
 //     } catch (error) {
@@ -1590,7 +1603,7 @@ app.listen(PORT, () => {
 //         const user = await User.findByIdAndUpdate(
 //             req.user.id,
 //             { defaultTerm: term },
-//             { returnDocument: 'after' } // FIXED deprecation warning
+//             { returnDocument: 'after' } 
 //         ).select('-__v');
 //         res.json({ success: true, user });
 //     } catch (error) {
@@ -1771,7 +1784,7 @@ app.listen(PORT, () => {
 //             await Todo.findOneAndUpdate(
 //                 { userEmail: email, date, section, subject },
 //                 { tasks },
-//                 { upsert: true, returnDocument: 'after' } // Already using the right parameter here
+//                 { upsert: true, returnDocument: 'after' } 
 //             );
 //         }
 //         res.json({ success: true });
@@ -1783,7 +1796,7 @@ app.listen(PORT, () => {
 
 
 // // ============================================================
-// // OLT SCRAPING ENGINE (Fully replicating the Python logic)
+// // OLT SCRAPING ENGINE 
 // // ============================================================
 
 // const BASE_URL = "https://olt.iimtrichy.ac.in";
@@ -1800,19 +1813,19 @@ app.listen(PORT, () => {
 //         "Micro Organizational Behaviour"
 //     ],
 //     "Term-II": [
-//         "Business Ethics", //
-//         "Corporate Finance", //
-//         "Information Systems for Managers", //
-//         "Macro Economics for Managers", //
-//         "Macro Organizational Behaviour", //
-//         "Marketing Management-II", //
-//         "Operations Research for Managers", //
-//         "The Entrepreneurial Manager" //
+//         "Business Ethics", 
+//         "Corporate Finance", 
+//         "Information Systems for Managers", 
+//         "Macro Economics for Managers", 
+//         "Macro Organizational Behaviour", 
+//         "Marketing Management-II", 
+//         "Operations Research for Managers", 
+//         "The Entrepreneurial Manager" 
 //     ]
 // };
 
 // // ============================================================
-// // ATTENDANCE FETCH PROGRESS TRACKING (in-memory, per-user)
+// // ATTENDANCE FETCH PROGRESS TRACKING 
 // // ============================================================
 // const attendanceProgress = new Map();
 
@@ -2445,30 +2458,41 @@ app.listen(PORT, () => {
 // };
 
 // // ============================================================
-// // 6. BACKGROUND POLLING & IN-MEMORY CACHE
+// // 6. SAFE RECURSIVE BACKGROUND POLLING (Fixes OOM & Latency)
 // // ============================================================
 
 // let globalCache = {};
 // let lastFetchTime = 0;
 // let isFetching = false;
 // let activeFetchPromise = null;
-// const CACHE_TTL_MS = 5 * 60 * 1000;
+// const CACHE_TTL_MS = 10 * 60 * 1000; // 3 minutes
 
 // const updateCache = async () => {
 //     if (isFetching) return activeFetchPromise;
 //     isFetching = true;
 
 //     activeFetchPromise = (async () => {
+//         let response = null;
+//         let buffer = null;
+//         let workbook = null;
+
 //         try {
-//             console.log("[Cache] Downloading Term-II Excel sheet via Apps Script Bridge...");
+//             console.log("[Cache] Downloading Excel sheet...");
             
 //             const bridgeUrl = "https://script.google.com/macros/s/AKfycbzqdMacopeFnXZmc9MgnN2cdTyZjIqCbMyDUQvx6VAMounnDswc88hmu5vOmhLZSmTfgw/exec";
-//             const response = await axios.get(bridgeUrl, { responseType: 'text' });
+//             response = await axios.get(bridgeUrl, { responseType: 'text' });
             
-//             const buffer = Buffer.from(response.data, 'base64');
+//             buffer = Buffer.from(response.data, 'base64');
+            
+//             // Explicit Memory Clean: Dump large base64 string from RAM immediately
+//             response.data = null;
+//             response = null;
 
-//             const workbook = new ExcelJS.Workbook();
+//             workbook = new ExcelJS.Workbook();
 //             await workbook.xlsx.load(buffer);
+            
+//             // Explicit Memory Clean: Dump buffer from RAM immediately after parsing
+//             buffer = null;
 
 //             const newCache = {};
 //             for (const sec of ALL_SECTIONS) {
@@ -2476,21 +2500,43 @@ app.listen(PORT, () => {
 //                 if (data) newCache[sec] = data;
 //             }
 
+//             // Explicit Memory Clean: Dump the massive workbook tree from RAM immediately
+//             workbook = null;
+
 //             globalCache = newCache;
 //             lastFetchTime = Date.now();
-//             console.log("[Cache] Successfully updated all Term-II sections in memory.");
+//             console.log("[Cache] Update successful. Memory cleared.");
 //             return globalCache;
 //         } catch (error) {
-//             console.error("[Cache Error] Failed to fetch or parse Excel data from Bridge:", error.message);
+//             console.error("[Cache Error] Failed to update:", error.message);
 //             throw error;
 //         } finally {
+//             // Failsafe: Ensure heavy objects are forcefully dereferenced even if extraction crashes
+//             response = null;
+//             buffer = null;
+//             workbook = null;
+            
 //             isFetching = false;
+//             activeFetchPromise = null; 
 //         }
 //     })();
 
 //     return activeFetchPromise;
 // };
 
+// // --- SAFE DAEMON: Never overlaps, completely safe from OOM ---
+// const runBackgroundDaemon = async () => {
+//     try {
+//         await updateCache();
+//     } catch (e) {
+//         console.error("Daemon error:", e.message);
+//     } finally {
+//         // Wait strictly 3 minutes AFTER the previous run finishes and memory is cleared
+//         setTimeout(runBackgroundDaemon, CACHE_TTL_MS);
+//     }
+// };
+
+// // --- ENDPOINT: Instant Return ---
 // app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 //     const section = req.params.section.toUpperCase();
 //     const forceRefresh = req.query.force === 'true';
@@ -2502,18 +2548,29 @@ app.listen(PORT, () => {
 //     });
 
 //     try {
-//         if (!forceRefresh && globalCache[section] && (Date.now() - lastFetchTime < CACHE_TTL_MS)) {
+//         // 1. If user forces a refresh via the Sync button, make them wait for the latest
+//         if (forceRefresh) {
+//             await updateCache();
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         }
+
+//         // 2. Return instantly from RAM. The Safe Daemon guarantees it is fresh (<= 3 mins old)
+//         if (globalCache[section]) {
+//             return res.json({ ...globalCache[section], meta: buildMeta() });
+//         }
+
+//         // 3. First boot only: If RAM is completely empty, user waits.
+//         console.log(`[Cache] Empty memory. User must wait for initial download.`);
 //         await updateCache();
+        
 //         if (globalCache[section]) {
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         } else {
 //             return res.status(404).json({ error: `Section ${section} not found in ERP data.` });
 //         }
+
 //     } catch (error) {
 //         if (globalCache[section]) {
-//             console.log(`[Fallback] Served stale cache for Section ${section} due to network error.`);
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         }
 //         res.status(500).json({ error: 'Failed to fetch timetable data' });
@@ -2521,13 +2578,12 @@ app.listen(PORT, () => {
 // });
 
 // // ============================================================
-// // 8. SELF-PING & DAEMON
+// // 8. SELF-PING
 // // ============================================================
 
 // const PORT = process.env.PORT || 5000;
-// // FIX: Force explicitly binding loopback IPv4 instead of 'localhost' to prevent Node.js 18+ from 
-// // resolving to ::1 (IPv6) which leads to ECONNREFUSED errors.
-// const PING_URL = process.env.PING_URL || `http://127.0.0.1:${PORT}`;
+// // Set this to your external production URL
+// const PING_URL = process.env.PING_URL || `https://iimt-7iy6.onrender.com`;
 // let pingCount = 0;
 
 // const pingServer = async () => {
@@ -2544,7 +2600,11 @@ app.listen(PORT, () => {
 
 // app.listen(PORT, () => {
 //     console.log(`Server running on port ${PORT}`);
-//     updateCache().catch(console.error);
-//     setInterval(updateCache, CACHE_TTL_MS);
+    
+//     // Starts the safe background parsing loop
+//     runBackgroundDaemon();
+    
+//     // Keeps the instance alive
 //     setInterval(pingServer, PING_INTERVAL_MS);
 // });
+

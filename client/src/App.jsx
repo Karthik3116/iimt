@@ -497,11 +497,16 @@ function App() {
 
     localStorage.removeItem('iimt_user');
     localStorage.removeItem('iimt_token');
+    
+    // Clear timetable caches on logout to ensure fresh data on next login
+    SECTIONS.forEach(s => localStorage.removeItem(`iimt_timetable_cache_${s}`));
 
     setCache({});
   };
 
   const applyDateLogic = (data) => {
+    if (!data || data.length === 0) return;
+    
     const validDates = data
       .map(d => d.isoDate)
       .filter(Boolean);
@@ -527,83 +532,85 @@ function App() {
     }
   };
 
+  // --- REFACTORED: Local-First Caching Logic ---
   const fetchTimetable = async (
     sec,
     forceBackendSync = false,
     isBackgroundRefresh = false
   ) => {
-    if (
-      !forceBackendSync &&
-      !isBackgroundRefresh &&
-      cache[sec]
-    ) {
-      setScheduleData(cache[sec].timetable);
-      setSummaryData(cache[sec].summary);
+    const localKey = `iimt_timetable_cache_${sec}`;
+    
+    let hasLocalData = !!cache[sec];
 
-      if (cache[sec].meta) {
-        setSyncMeta(cache[sec].meta);
+    // 1. Instantly load from local storage if memory cache is empty
+    if (!hasLocalData) {
+      const stored = localStorage.getItem(localKey);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          setCache(prev => ({ ...prev, [sec]: parsed }));
+          setScheduleData(parsed.timetable);
+          setSummaryData(parsed.summary);
+          if (parsed.meta) setSyncMeta(parsed.meta);
+          
+          // Apply date logic to instantly snap to today without loaders
+          if (!selectedDate) applyDateLogic(parsed.timetable);
+          
+          hasLocalData = true;
+        } catch(e) {
+          localStorage.removeItem(localKey);
+        }
       }
-
-      applyDateLogic(cache[sec].timetable);
-      return;
     }
 
-    if (!isBackgroundRefresh) {
+    // 2. Only show loading screen if we absolutely have no data
+    const shouldShowLoader = !hasLocalData && !isBackgroundRefresh;
+
+    if (shouldShowLoader) {
       setLoading(true);
       setError('');
     }
 
     try {
       const token = localStorage.getItem('iimt_token');
-
       const res = await axios.get(
         `${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      // HTTP 304 (Not Modified) or empty body means data is unchanged. Skip update.
+      if (!res.data || !res.data.timetable) return;
 
       const data = res.data.timetable;
       const summary = res.data.summary;
       const meta = res.data.meta;
 
-      setScheduleData(data);
-      setSummaryData(summary);
-
-      if (meta) {
-        setSyncMeta(meta);
-      }
-
-      if (!isBackgroundRefresh) {
+      // Only re-apply date boundaries if forced or if we didn't have data initially
+      if (!hasLocalData || forceBackendSync) {
         applyDateLogic(data);
       }
 
-      setCache(prevCache => ({
-        ...prevCache,
-        [sec]: {
-          timetable: data,
-          summary,
-          meta
-        }
-      }));
+      setScheduleData(data);
+      setSummaryData(summary);
+      if (meta) setSyncMeta(meta);
+
+      const cachePayload = { timetable: data, summary, meta };
+      
+      // Update memory & local browser storage silently
+      setCache(prevCache => ({ ...prevCache, [sec]: cachePayload }));
+      localStorage.setItem(localKey, JSON.stringify(cachePayload));
+
     } catch (err) {
-      if (err.response?.status === 429) {
-        if (!isBackgroundRefresh) {
-          setError(
-            'Server busy: Rate limit exceeded. Try again in a few minutes.'
-          );
-        }
-      } else if (err.response?.status !== 401) {
-        if (!isBackgroundRefresh) {
-          setError(
-            'System Error: Unable to fetch ERP data.'
-          );
+      // Ignore background errors if we already rendered the UI from local cache
+      if (shouldShowLoader) {
+        if (err.response?.status === 429) {
+          setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
+        } else if (err.response?.status !== 401) {
+          setError('System Error: Unable to fetch ERP data.');
         }
       }
     } finally {
-      if (!isBackgroundRefresh) {
+      if (shouldShowLoader) {
         setLoading(false);
       }
     }
@@ -686,6 +693,8 @@ function App() {
     trackEvent('button_click', 'manual_sync_timetable');
 
     setCache({});
+    SECTIONS.forEach(s => localStorage.removeItem(`iimt_timetable_cache_${s}`));
+    
     fetchTimetable(section, true, false);
   };
 
@@ -4955,7 +4964,6 @@ function CredentialForm({
 }
 
 export default App;
-
 // import React, { useState, useEffect, useRef } from 'react';
 // import axios from 'axios';
 // import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
@@ -5737,9 +5745,10 @@ export default App;
 //       {
 //         hour: '2-digit',
 //         minute: '2-digit',
+//         hour12: true,
 //         timeZone: 'Asia/Kolkata'
 //       }
-//     );
+//     ).toUpperCase();
 //   };
 
 //   const minutesToNextRefresh = () => {
@@ -9294,14 +9303,18 @@ export default App;
 //                     </span>
 
 //                     <span className="live-data-meta">
-//                       Last synced{' '}
-//                       {formatClockTime(
-//                         syncMeta.lastFetchTime
-//                       )}{' '}
-//                       IST
-
-//                       {nextRefreshMins !== null &&
-//                         ` · Next auto-sync in ~${nextRefreshMins} min (at ${formatClockTime(syncMeta.nextRefreshTime)} IST)`}
+//                       {loading ? (
+//                         'Syncing live data...'
+//                       ) : syncMeta.lastFetchTime ? (
+//                         <>
+//                           Last synced {formatClockTime(syncMeta.lastFetchTime)} IST
+//                           {nextRefreshMins !== null && (
+//                             <> &middot; Next auto-sync in ~{nextRefreshMins} min (at {formatClockTime(syncMeta.nextRefreshTime)} IST)</>
+//                           )}
+//                         </>
+//                       ) : (
+//                         'Waiting for sync...'
+//                       )}
 //                     </span>
 //                   </div>
 
