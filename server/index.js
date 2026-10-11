@@ -532,10 +532,17 @@ app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
         await page.type("input[type='password']", mhePassword, { delay: 50 });
 
         // Wait for navigation after clicking sign in
-        await Promise.all([
-            page.waitForNavigation({ timeout: 30000 }),
-            page.click("button:has-text('Sign In')")
-        ]);
+        
+        // NEW CODE (Fixed for Render/McGraw Hill):
+        await page.click("button:has-text('Sign In')");
+
+        // Wait for URL redirect or Network Idle instead of page load navigation
+        await Promise.race([
+            page.waitForURL(url => !url.href.includes('/login'), { timeout: 65000 }),
+            page.waitForLoadState("networkidle", { timeout: 65000 })
+        ]).catch(() => console.log("Login transition finished or reached timeout, continuing..."));
+
+        await page.waitForTimeout(3000);
 
         await page.waitForLoadState("networkidle");
         await page.waitForTimeout(3000);
