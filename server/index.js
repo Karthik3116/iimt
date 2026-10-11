@@ -618,8 +618,7 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 // NEW: MCGRAW HILL ASSIGNMENTS SCRAPER (DYNAMIC TIMEOUT & RETRY)
 // ============================================================
 
-let mheScrapeBusy = false; // one browser at a time -> avoids OOM on small instances
-
+let mheScrapeBusy = false;
 const MHE_MIN_DUE_DATE = process.env.MHE_MIN_DUE_DATE || '2026-10-11';
 
 async function scrapeMheAssignments({ username, password, sectionId, userEmail }) {
@@ -636,8 +635,7 @@ async function scrapeMheAssignments({ username, password, sectionId, userEmail }
                 '--disable-blink-features=AutomationControlled'
             ]
         };
-        // Optional: residential/other proxy if Render's IP gets blocked
-        // e.g. MHE_PROXY=http://user:pass@host:port
+        // Optional proxy if Render's IP gets blocked, e.g. MHE_PROXY=http://user:pass@host:port
         if (process.env.MHE_PROXY) launchOptions.proxy = { server: process.env.MHE_PROXY };
 
         browser = await chromium.launch(launchOptions);
@@ -684,41 +682,68 @@ async function scrapeMheAssignments({ username, password, sectionId, userEmail }
                     resolveCaptured(true);
                 }
             } catch (e) {
-                // body can be unavailable if the page navigated; ignore, we retry below
+                // body can be unavailable if the page navigated; we retry below
             }
         });
 
-        // --- LOGIN ---
-        console.log(`[MHE] ${userEmail} logging in...`);
-        await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded" });
-        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+        // --- LOGIN (fill first, keystroke typing as fallback) ---
+        username = String(username || '').trim();
+        password = String(password || '');
+        console.log(`[MHE] ${userEmail} logging in... (user len=${username.length}, pass len=${password.length})`);
 
-        await page.waitForSelector("input[type='email']", { timeout: 25000 });
-        await page.click("input[type='email']");
-        await page.type("input[type='email']", username, { delay: 50 });
-        await page.click("input[type='password']");
-        await page.type("input[type='password']", password, { delay: 50 });
+        const emailSel = "input[type='email']";
+        const passSel = "input[type='password']";
 
-        await Promise.all([
-            page.waitForURL(url => !url.href.includes('/login'), { timeout: 45000 }).catch(() => null),
-            page.click("button:has-text('Sign In')")
-        ]);
-        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
-        await page.waitForTimeout(2000);
+        const tryLogin = async (mode) => {
+            await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded" });
+            await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+            await page.waitForSelector(emailSel, { timeout: 25000 });
 
-        const afterLoginUrl = page.url();
-        console.log(`[MHE] After login URL: ${afterLoginUrl}`);
+            for (const [sel, val] of [[emailSel, username], [passSel, password]]) {
+                await page.click(sel);
+                await page.fill(sel, '');
+                if (mode === 'fill') await page.fill(sel, val);
+                else await page.type(sel, val, { delay: 90 });
+            }
 
-        if (afterLoginUrl.includes('/login')) {
-            // Still on login page -> wrong creds, captcha, or bot block
-            let bodySnippet = '';
-            try {
-                bodySnippet = (await page.innerText('body')).replace(/\s+/g, ' ').substring(0, 300);
-            } catch (e) {}
-            const err = new Error("McGraw Hill login did not complete (wrong credentials, captcha, or bot-block on server IP).");
-            err.debug = { afterLoginUrl, title: await page.title().catch(() => ''), bodySnippet };
+            const emailOk = (await page.inputValue(emailSel)) === username;
+            const passOk = (await page.inputValue(passSel)) === password;
+            console.log(`[MHE] mode=${mode} fieldsMatchInput: email=${emailOk}, password=${passOk}`);
+
+            await page.click("button:has-text('Sign In')");
+
+            // Poll up to 25s: success = left /login, failure = error text shown
+            for (let i = 0; i < 25; i++) {
+                await page.waitForTimeout(1000);
+                if (!page.url().includes('/login')) return { ok: true };
+                const body = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ');
+                if (/do not match any accounts/i.test(body)) {
+                    return { ok: false, reason: 'BAD_CREDS', emailOk, passOk };
+                }
+            }
+            return { ok: false, reason: 'NO_REDIRECT', emailOk, passOk };
+        };
+
+        let result = await tryLogin('fill');
+        if (!result.ok) {
+            console.log(`[MHE] fill mode failed (${result.reason}), retrying with typed input...`);
+            result = await tryLogin('type');
+        }
+
+        if (!result.ok) {
+            const err = new Error(
+                result.reason === 'BAD_CREDS'
+                    ? "McGraw Hill rejected the email/password. Please re-check them (try logging in at accounts.mheducation.com first)."
+                    : "McGraw Hill login did not complete (possible captcha or bot-block on the server IP)."
+            );
+            err.code = result.reason;
+            err.debug = { afterLoginUrl: page.url(), ...result };
             throw err;
         }
+
+        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        console.log(`[MHE] After login URL: ${page.url()}`);
 
         // --- FETCH CLASS PAGE ---
         const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
@@ -783,6 +808,7 @@ async function scrapeMheAssignments({ username, password, sectionId, userEmail }
     }
 }
 
+
 app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
     const { mheUsername, mhePassword, sectionId } = req.body;
 
@@ -805,9 +831,10 @@ app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
         return res.status(200).json({ success: true, count: data.length, data });
     } catch (error) {
         console.error(`[MHE] Error for ${req.user.email}: ${error.message}`, error.debug || '');
-        return res.status(500).json({
+        const status = error.code === 'BAD_CREDS' ? 400 : 500;
+        return res.status(status).json({
             error: error.message,
-            debug: error.debug || undefined   // remove this line once it works
+            debug: error.debug || undefined   // remove once it works
         });
     } finally {
         mheScrapeBusy = false;
