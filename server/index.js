@@ -487,80 +487,212 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 // ============================================================
 // NEW: MCGRAW HILL ASSIGNMENTS SCRAPER
 // ============================================================
-app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
-    // Expected to receive McGraw Hill creds + class sectionId from the frontend
-    // const { mheUsername, mhePassword, sectionId } = req.body;
-    const mheUsername = "kartheek.p26030@iimtrichy.ac.in";
-    const mhePassword = "Karthik926464#";
-    const sectionId = "157468169";
+// app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
+//     // Expected to receive McGraw Hill creds + class sectionId from the frontend
+//     // const { mheUsername, mhePassword, sectionId } = req.body;
+//     const mheUsername = "kartheek.p26030@iimtrichy.ac.in";
+//     const mhePassword = "Karthik926464#";
+//     const sectionId = "157468169";
 
-    // if (!mheUsername || !mhePassword || !sectionId) {
-    //     return res.status(400).json({ error: "Missing McGraw Hill credentials or sectionId" });
-    // }
+//     // if (!mheUsername || !mhePassword || !sectionId) {
+//     //     return res.status(400).json({ error: "Missing McGraw Hill credentials or sectionId" });
+//     // }
+
+//     let browser;
+//     try {
+//         // browser = await chromium.launch({ headless: true });
+//         browser = await chromium.launch({ 
+//             headless: true,
+//             args: [
+//                 '--no-sandbox',
+//                 '--disable-setuid-sandbox',
+//                 '--disable-dev-shm-usage',
+//                 '--disable-gpu'
+//             ]
+//         });
+//         const context = await browser.newContext({
+//             userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+//             viewport: { width: 1920, height: 1080 }
+//         });
+//         const page = await context.newPage();
+
+//         // Native Stealth
+//         await page.addInitScript(() => {
+//             Object.defineProperty(navigator, 'webdriver', {
+//                 get: () => undefined
+//             });
+//         });
+
+//         console.log(`User ${req.user.email} logging into McGraw Hill...`);
+//         await page.goto("https://accounts.mheducation.com/login");
+//         await page.waitForLoadState("networkidle");
+
+//         await page.waitForSelector("input[type='email']", { timeout: 15000 });
+//         await page.type("input[type='email']", mheUsername, { delay: 50 });
+//         await page.type("input[type='password']", mhePassword, { delay: 50 });
+
+//         // Wait for navigation after clicking sign in
+        
+//         // NEW CODE (Fixed for Render/McGraw Hill):
+//         await page.click("button:has-text('Sign In')");
+
+//         // Wait for URL redirect or Network Idle instead of page load navigation
+//         await Promise.race([
+//             page.waitForURL(url => !url.href.includes('/login'), { timeout: 65000 }),
+//             page.waitForLoadState("networkidle", { timeout: 65000 })
+//         ]).catch(() => console.log("Login transition finished or reached timeout, continuing..."));
+
+//         await page.waitForTimeout(3000);
+
+//         await page.waitForLoadState("networkidle");
+//         await page.waitForTimeout(3000);
+
+//         console.log(`Fetching assignments for section ${sectionId}...`);
+//         const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
+
+//         // Actively wait for the specific API response that contains "studentAssignments"
+//         const responsePromise = page.waitForResponse(response => 
+//             response.url().includes("studentAssignments") && response.status() === 200, 
+//             { timeout: 30000 }
+//         );
+
+//         await page.goto(classUrl, { waitUntil: "domcontentloaded" });
+
+//         // Safely extract the JSON immediately while the browser is still open
+//         const responseInfo = await responsePromise;
+//         const rawApiData = await responseInfo.json();
+
+//         // --- Parse and Filter the Data ---
+//         if (rawApiData && rawApiData.sectionAssignments) {
+//             const courseDetails = {};
+            
+//             for (const assignment of rawApiData.sectionAssignments) {
+//                 courseDetails[assignment.id] = {
+//                     name: assignment.name || 'Unknown',
+//                     due: assignment.endDateTime || 'No due date'
+//                 };
+//             }
+
+//             const assignmentsList = [];
+
+//             for (const studentStatus of (rawApiData.studentAssignments || [])) {
+//                 const assignmentId = studentStatus.sectionAssignment;
+//                 const status = studentStatus.status || 'UNKNOWN';
+                
+//                 const details = courseDetails[assignmentId];
+                
+//                 if (details) {
+//                     // Format the due date string cleanly
+//                     const dueDateClean = details.due.replace("T", " ").substring(0, 16);
+                    
+//                     // --- NEW FILTER APPLIED HERE ---
+//                     if (dueDateClean >= "2026-10-11") {
+//                         assignmentsList.push({
+//                             status: status,
+//                             dueDate: dueDateClean,
+//                             name: details.name
+//                         });
+//                     }
+//                 }
+//             }
+//             return res.status(200).json({
+//                 success: true,
+//                 count: assignmentsList.length,
+//                 data: assignmentsList
+//             });
+//         } else {
+//             return res.status(500).json({ error: "Failed to capture the assignment data. The data structure might have changed." });
+//         }
+
+//     } catch (error) {
+//         console.error(`Browser automation error for user ${req.user.email}: ${error.message}`);
+//         return res.status(500).json({ error: "Failed to scrape assignments. Invalid credentials or timeout." });
+//     } finally {
+//         if (browser) {
+//             await browser.close();
+//         }
+//     }
+// });
+
+// ============================================================
+// NEW: MCGRAW HILL ASSIGNMENTS SCRAPER (DYNAMIC TIMEOUT & RETRY)
+// ============================================================
+app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
+    const { mheUsername, mhePassword, sectionId } = req.body;
+
+    if (!mheUsername || !mhePassword || !sectionId) {
+        return res.status(400).json({ error: "Missing McGraw Hill credentials or sectionId" });
+    }
 
     let browser;
     try {
-        // browser = await chromium.launch({ headless: true });
-        browser = await chromium.launch({ 
+        browser = await chromium.launch({
             headless: true,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-gpu'
+                '--disable-gpu',
+                '--disable-blink-features=AutomationControlled'
             ]
         });
+
         const context = await browser.newContext({
             userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             viewport: { width: 1920, height: 1080 }
         });
+
         const page = await context.newPage();
 
-        // Native Stealth
         await page.addInitScript(() => {
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         });
 
         console.log(`User ${req.user.email} logging into McGraw Hill...`);
-        await page.goto("https://accounts.mheducation.com/login");
-        await page.waitForLoadState("networkidle");
+        await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded", timeout: 60000 });
 
-        await page.waitForSelector("input[type='email']", { timeout: 15000 });
+        await page.waitForSelector("input[type='email']", { timeout: 20000 });
         await page.type("input[type='email']", mheUsername, { delay: 50 });
         await page.type("input[type='password']", mhePassword, { delay: 50 });
 
-        // Wait for navigation after clicking sign in
-        
-        // NEW CODE (Fixed for Render/McGraw Hill):
         await page.click("button:has-text('Sign In')");
 
-        // Wait for URL redirect or Network Idle instead of page load navigation
+        // Wait dynamically for login redirect/idle state
         await Promise.race([
-            page.waitForURL(url => !url.href.includes('/login'), { timeout: 65000 }),
-            page.waitForLoadState("networkidle", { timeout: 65000 })
-        ]).catch(() => console.log("Login transition finished or reached timeout, continuing..."));
+            page.waitForURL(url => !url.href.includes('/login'), { timeout: 45000 }),
+            page.waitForLoadState("networkidle", { timeout: 45000 })
+        ]).catch(() => console.log("Login transition complete or timed out, proceeding to section page..."));
 
-        await page.waitForTimeout(3000);
-
-        await page.waitForLoadState("networkidle");
         await page.waitForTimeout(3000);
 
         console.log(`Fetching assignments for section ${sectionId}...`);
         const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
 
-        // Actively wait for the specific API response that contains "studentAssignments"
-        const responsePromise = page.waitForResponse(response => 
-            response.url().includes("studentAssignments") && response.status() === 200, 
-            { timeout: 30000 }
-        );
+        // Variable to dynamically store captured API payload
+        let rawApiData = null;
 
-        await page.goto(classUrl, { waitUntil: "domcontentloaded" });
+        // Attach listener dynamically BEFORE trigger navigation
+        page.on('response', async (response) => {
+            if (response.url().includes("studentAssignments") && response.status() === 200) {
+                try {
+                    rawApiData = await response.json();
+                    console.log("Successfully intercepted studentAssignments payload dynamically!");
+                } catch (e) {
+                    console.error("Error parsing intercepted response JSON:", e.message);
+                }
+            }
+        });
 
-        // Safely extract the JSON immediately while the browser is still open
-        const responseInfo = await responsePromise;
-        const rawApiData = await responseInfo.json();
+        // Trigger navigation to class section
+        await page.goto(classUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+
+        // Dynamic check loop: Wait up to 35 seconds for rawApiData to pop up
+        let waitCounter = 0;
+        const maxWaitSeconds = 35;
+        while (!rawApiData && waitCounter < maxWaitSeconds) {
+            await page.waitForTimeout(1000);
+            waitCounter++;
+        }
 
         // --- Parse and Filter the Data ---
         if (rawApiData && rawApiData.sectionAssignments) {
@@ -582,10 +714,8 @@ app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
                 const details = courseDetails[assignmentId];
                 
                 if (details) {
-                    // Format the due date string cleanly
                     const dueDateClean = details.due.replace("T", " ").substring(0, 16);
                     
-                    // --- NEW FILTER APPLIED HERE ---
                     if (dueDateClean >= "2026-10-11") {
                         assignmentsList.push({
                             status: status,
@@ -595,25 +725,27 @@ app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
                     }
                 }
             }
+
             return res.status(200).json({
                 success: true,
                 count: assignmentsList.length,
                 data: assignmentsList
             });
         } else {
-            return res.status(500).json({ error: "Failed to capture the assignment data. The data structure might have changed." });
+            return res.status(500).json({ 
+                error: "Timeout waiting for assignment data. Please verify your section ID and try again." 
+            });
         }
 
     } catch (error) {
         console.error(`Browser automation error for user ${req.user.email}: ${error.message}`);
-        return res.status(500).json({ error: "Failed to scrape assignments. Invalid credentials or timeout." });
+        return res.status(500).json({ error: `Automation error: ${error.message}` });
     } finally {
         if (browser) {
             await browser.close();
         }
     }
 });
-
 
 // ============================================================
 // OLT SCRAPING ENGINE 
