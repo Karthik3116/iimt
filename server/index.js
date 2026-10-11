@@ -617,6 +617,172 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
 // ============================================================
 // NEW: MCGRAW HILL ASSIGNMENTS SCRAPER (DYNAMIC TIMEOUT & RETRY)
 // ============================================================
+
+let mheScrapeBusy = false; // one browser at a time -> avoids OOM on small instances
+
+const MHE_MIN_DUE_DATE = process.env.MHE_MIN_DUE_DATE || '2026-10-11';
+
+async function scrapeMheAssignments({ username, password, sectionId, userEmail }) {
+    let browser;
+    try {
+        const launchOptions = {
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-zygote',
+                '--disable-blink-features=AutomationControlled'
+            ]
+        };
+        // Optional: residential/other proxy if Render's IP gets blocked
+        // e.g. MHE_PROXY=http://user:pass@host:port
+        if (process.env.MHE_PROXY) launchOptions.proxy = { server: process.env.MHE_PROXY };
+
+        browser = await chromium.launch(launchOptions);
+
+        const context = await browser.newContext({
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport: { width: 1920, height: 1080 },
+            locale: 'en-US',
+            timezoneId: 'Asia/Kolkata'
+        });
+
+        // Save memory/bandwidth: skip heavy assets
+        await context.route('**/*', (route) => {
+            const type = route.request().resourceType();
+            if (['image', 'font', 'media'].includes(type)) return route.abort();
+            return route.continue();
+        });
+
+        await context.addInitScript(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        });
+
+        const page = await context.newPage();
+        page.setDefaultTimeout(60000);
+
+        // --- Context-level listener: catches the API call from any frame/page ---
+        let rawApiData = null;
+        let resolveCaptured;
+        const captured = new Promise(r => { resolveCaptured = r; });
+        const seenApiUrls = [];
+
+        context.on('response', async (response) => {
+            try {
+                const url = response.url();
+                if (/assignment/i.test(url)) seenApiUrls.push(`${response.status()} ${url.substring(0, 140)}`);
+                if (rawApiData) return;
+                if (!url.includes('studentAssignments')) return;
+                if (response.status() !== 200) return;
+
+                const text = await response.text();
+                const json = JSON.parse(text);
+                if (json && json.sectionAssignments) {
+                    rawApiData = json;
+                    resolveCaptured(true);
+                }
+            } catch (e) {
+                // body can be unavailable if the page navigated; ignore, we retry below
+            }
+        });
+
+        // --- LOGIN ---
+        console.log(`[MHE] ${userEmail} logging in...`);
+        await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded" });
+        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+
+        await page.waitForSelector("input[type='email']", { timeout: 25000 });
+        await page.click("input[type='email']");
+        await page.type("input[type='email']", username, { delay: 50 });
+        await page.click("input[type='password']");
+        await page.type("input[type='password']", password, { delay: 50 });
+
+        await Promise.all([
+            page.waitForURL(url => !url.href.includes('/login'), { timeout: 45000 }).catch(() => null),
+            page.click("button:has-text('Sign In')")
+        ]);
+        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+
+        const afterLoginUrl = page.url();
+        console.log(`[MHE] After login URL: ${afterLoginUrl}`);
+
+        if (afterLoginUrl.includes('/login')) {
+            // Still on login page -> wrong creds, captcha, or bot block
+            let bodySnippet = '';
+            try {
+                bodySnippet = (await page.innerText('body')).replace(/\s+/g, ' ').substring(0, 300);
+            } catch (e) {}
+            const err = new Error("McGraw Hill login did not complete (wrong credentials, captcha, or bot-block on server IP).");
+            err.debug = { afterLoginUrl, title: await page.title().catch(() => ''), bodySnippet };
+            throw err;
+        }
+
+        // --- FETCH CLASS PAGE ---
+        const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
+        console.log(`[MHE] Opening ${classUrl}`);
+
+        await page.goto(classUrl, { waitUntil: "domcontentloaded" }).catch(e => {
+            console.log("[MHE] goto warning:", e.message);
+        });
+
+        const waitForCapture = (ms) => Promise.race([
+            captured,
+            new Promise(r => setTimeout(() => r(false), ms))
+        ]);
+
+        let ok = await waitForCapture(40000);
+
+        if (!ok) {
+            console.log("[MHE] No payload yet, reloading once...");
+            await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+            ok = await waitForCapture(30000);
+        }
+
+        if (!ok || !rawApiData) {
+            let bodySnippet = '';
+            try {
+                bodySnippet = (await page.innerText('body')).replace(/\s+/g, ' ').substring(0, 300);
+            } catch (e) {}
+            const err = new Error("Logged in, but the assignments data never loaded. Check your Section ID.");
+            err.debug = {
+                finalUrl: page.url(),
+                title: await page.title().catch(() => ''),
+                bodySnippet,
+                seenApiUrls: seenApiUrls.slice(0, 10)
+            };
+            throw err;
+        }
+
+        // --- PARSE ---
+        const courseDetails = {};
+        for (const a of rawApiData.sectionAssignments || []) {
+            courseDetails[a.id] = {
+                name: a.name || 'Unknown',
+                due: a.endDateTime || ''
+            };
+        }
+
+        const list = [];
+        for (const s of rawApiData.studentAssignments || []) {
+            const details = courseDetails[s.sectionAssignment];
+            if (!details) continue;
+
+            const dueClean = details.due ? details.due.replace("T", " ").substring(0, 16) : 'No due date';
+            if (dueClean === 'No due date' || dueClean >= MHE_MIN_DUE_DATE) {
+                list.push({ status: s.status || 'UNKNOWN', dueDate: dueClean, name: details.name });
+            }
+        }
+
+        list.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+        return list;
+    } finally {
+        if (browser) await browser.close().catch(() => {});
+    }
+}
+
 app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
     const { mheUsername, mhePassword, sectionId } = req.body;
 
@@ -624,132 +790,165 @@ app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
         return res.status(400).json({ error: "Missing McGraw Hill credentials or sectionId" });
     }
 
-    let browser;
+    if (mheScrapeBusy) {
+        return res.status(429).json({ error: "Another fetch is in progress. Please try again in about a minute." });
+    }
+
+    mheScrapeBusy = true;
     try {
-        browser = await chromium.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-blink-features=AutomationControlled'
-            ]
+        const data = await scrapeMheAssignments({
+            username: mheUsername,
+            password: mhePassword,
+            sectionId: String(sectionId).trim(),
+            userEmail: req.user.email
         });
-
-        const context = await browser.newContext({
-            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport: { width: 1920, height: 1080 }
-        });
-
-        const page = await context.newPage();
-
-        await page.addInitScript(() => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        });
-
-        console.log(`User ${req.user.email} logging into McGraw Hill...`);
-        await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded", timeout: 60000 });
-
-        await page.waitForSelector("input[type='email']", { timeout: 20000 });
-        await page.type("input[type='email']", mheUsername, { delay: 50 });
-        await page.type("input[type='password']", mhePassword, { delay: 50 });
-
-        await page.click("button:has-text('Sign In')");
-
-        // Wait dynamically for login redirect/idle state
-        await Promise.race([
-            page.waitForURL(url => !url.href.includes('/login'), { timeout: 45000 }),
-            page.waitForLoadState("networkidle", { timeout: 45000 })
-        ]).catch(() => console.log("Login transition complete or timed out, proceeding to section page..."));
-
-        await page.waitForTimeout(3000);
-
-        console.log(`Fetching assignments for section ${sectionId}...`);
-        const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
-
-        // Variable to dynamically store captured API payload
-        let rawApiData = null;
-
-        // Attach listener dynamically BEFORE trigger navigation
-        page.on('response', async (response) => {
-            if (response.url().includes("studentAssignments") && response.status() === 200) {
-                try {
-                    rawApiData = await response.json();
-                    console.log("Successfully intercepted studentAssignments payload dynamically!");
-                } catch (e) {
-                    console.error("Error parsing intercepted response JSON:", e.message);
-                }
-            }
-        });
-
-        // Trigger navigation to class section
-        await page.goto(classUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-
-        // Dynamic check loop: Wait up to 35 seconds for rawApiData to pop up
-        let waitCounter = 0;
-        const maxWaitSeconds = 35;
-        while (!rawApiData && waitCounter < maxWaitSeconds) {
-            await page.waitForTimeout(1000);
-            waitCounter++;
-        }
-
-        // --- Parse and Filter the Data ---
-        if (rawApiData && rawApiData.sectionAssignments) {
-            const courseDetails = {};
-            
-            for (const assignment of rawApiData.sectionAssignments) {
-                courseDetails[assignment.id] = {
-                    name: assignment.name || 'Unknown',
-                    due: assignment.endDateTime || 'No due date'
-                };
-            }
-
-            const assignmentsList = [];
-
-            for (const studentStatus of (rawApiData.studentAssignments || [])) {
-                const assignmentId = studentStatus.sectionAssignment;
-                const status = studentStatus.status || 'UNKNOWN';
-                
-                const details = courseDetails[assignmentId];
-                
-                if (details) {
-                    const dueDateClean = details.due.replace("T", " ").substring(0, 16);
-                    
-                    if (dueDateClean >= "2026-10-11") {
-                        assignmentsList.push({
-                            status: status,
-                            dueDate: dueDateClean,
-                            name: details.name
-                        });
-                    }
-                }
-            }
-
-            return res.status(200).json({
-                success: true,
-                count: assignmentsList.length,
-                data: assignmentsList
-            });
-        } else {
-            return res.status(500).json({ 
-                error: "Timeout waiting for assignment data. Please verify your section ID and try again." 
-            });
-        }
-
+        return res.status(200).json({ success: true, count: data.length, data });
     } catch (error) {
-        console.error(`Browser automation error for user ${req.user.email}: ${error.message}`);
-        return res.status(500).json({ error: `Automation error: ${error.message}` });
+        console.error(`[MHE] Error for ${req.user.email}: ${error.message}`, error.debug || '');
+        return res.status(500).json({
+            error: error.message,
+            debug: error.debug || undefined   // remove this line once it works
+        });
     } finally {
-        if (browser) {
-            await browser.close();
-        }
+        mheScrapeBusy = false;
     }
 });
+
+// app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
+//     const { mheUsername, mhePassword, sectionId } = req.body;
+
+//     if (!mheUsername || !mhePassword || !sectionId) {
+//         return res.status(400).json({ error: "Missing McGraw Hill credentials or sectionId" });
+//     }
+
+//     let browser;
+//     try {
+//         browser = await chromium.launch({
+//             headless: true,
+//             args: [
+//                 '--no-sandbox',
+//                 '--disable-setuid-sandbox',
+//                 '--disable-dev-shm-usage',
+//                 '--disable-gpu',
+//                 '--disable-blink-features=AutomationControlled'
+//             ]
+//         });
+
+//         const context = await browser.newContext({
+//             userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+//             viewport: { width: 1920, height: 1080 }
+//         });
+
+//         const page = await context.newPage();
+
+//         await page.addInitScript(() => {
+//             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+//         });
+
+//         console.log(`User ${req.user.email} logging into McGraw Hill...`);
+//         await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded", timeout: 60000 });
+
+//         await page.waitForSelector("input[type='email']", { timeout: 20000 });
+//         await page.type("input[type='email']", mheUsername, { delay: 50 });
+//         await page.type("input[type='password']", mhePassword, { delay: 50 });
+
+//         await page.click("button:has-text('Sign In')");
+
+//         // Wait dynamically for login redirect/idle state
+//         await Promise.race([
+//             page.waitForURL(url => !url.href.includes('/login'), { timeout: 45000 }),
+//             page.waitForLoadState("networkidle", { timeout: 45000 })
+//         ]).catch(() => console.log("Login transition complete or timed out, proceeding to section page..."));
+
+//         await page.waitForTimeout(3000);
+
+//         console.log(`Fetching assignments for section ${sectionId}...`);
+//         const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
+
+//         // Variable to dynamically store captured API payload
+//         let rawApiData = null;
+
+//         // Attach listener dynamically BEFORE trigger navigation
+//         page.on('response', async (response) => {
+//             if (response.url().includes("studentAssignments") && response.status() === 200) {
+//                 try {
+//                     rawApiData = await response.json();
+//                     console.log("Successfully intercepted studentAssignments payload dynamically!");
+//                 } catch (e) {
+//                     console.error("Error parsing intercepted response JSON:", e.message);
+//                 }
+//             }
+//         });
+
+//         // Trigger navigation to class section
+//         await page.goto(classUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+
+//         // Dynamic check loop: Wait up to 35 seconds for rawApiData to pop up
+//         let waitCounter = 0;
+//         const maxWaitSeconds = 35;
+//         while (!rawApiData && waitCounter < maxWaitSeconds) {
+//             await page.waitForTimeout(1000);
+//             waitCounter++;
+//         }
+
+//         // --- Parse and Filter the Data ---
+//         if (rawApiData && rawApiData.sectionAssignments) {
+//             const courseDetails = {};
+            
+//             for (const assignment of rawApiData.sectionAssignments) {
+//                 courseDetails[assignment.id] = {
+//                     name: assignment.name || 'Unknown',
+//                     due: assignment.endDateTime || 'No due date'
+//                 };
+//             }
+
+//             const assignmentsList = [];
+
+//             for (const studentStatus of (rawApiData.studentAssignments || [])) {
+//                 const assignmentId = studentStatus.sectionAssignment;
+//                 const status = studentStatus.status || 'UNKNOWN';
+                
+//                 const details = courseDetails[assignmentId];
+                
+//                 if (details) {
+//                     const dueDateClean = details.due.replace("T", " ").substring(0, 16);
+                    
+//                     if (dueDateClean >= "2026-10-11") {
+//                         assignmentsList.push({
+//                             status: status,
+//                             dueDate: dueDateClean,
+//                             name: details.name
+//                         });
+//                     }
+//                 }
+//             }
+
+//             return res.status(200).json({
+//                 success: true,
+//                 count: assignmentsList.length,
+//                 data: assignmentsList
+//             });
+//         } else {
+//             return res.status(500).json({ 
+//                 error: "Timeout waiting for assignment data. Please verify your section ID and try again." 
+//             });
+//         }
+
+//     } catch (error) {
+//         console.error(`Browser automation error for user ${req.user.email}: ${error.message}`);
+//         return res.status(500).json({ error: `Automation error: ${error.message}` });
+//     } finally {
+//         if (browser) {
+//             await browser.close();
+//         }
+//     }
+// });
 
 // ============================================================
 // OLT SCRAPING ENGINE 
 // ============================================================
+
+
 
 const BASE_URL = "https://olt.iimtrichy.ac.in";
 const LOGIN_URL = `${BASE_URL}/Default.aspx`;
