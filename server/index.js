@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const cheerio = require('cheerio');
 const { google } = require('googleapis'); 
+const { chromium } = require('playwright'); // --- NEW: Added Playwright ---
 
 // Security middlewares
 const helmet = require('helmet');
@@ -479,6 +480,121 @@ app.post('/api/todos', authenticateUser, async (req, res) => {
     } catch (error) {
         console.error("Error saving todos:", error);
         res.status(500).json({ error: "Server error saving tasks." });
+    }
+});
+
+
+// ============================================================
+// NEW: MCGRAW HILL ASSIGNMENTS SCRAPER
+// ============================================================
+app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
+    // Expected to receive McGraw Hill creds + class sectionId from the frontend
+    // const { mheUsername, mhePassword, sectionId } = req.body;
+    const mheUsername = "kartheek.p26030@iimtrichy.ac.in";
+    const mhePassword = "Karthik926464#";
+    const sectionId = "157468169";
+
+    // if (!mheUsername || !mhePassword || !sectionId) {
+    //     return res.status(400).json({ error: "Missing McGraw Hill credentials or sectionId" });
+    // }
+
+    let browser;
+    try {
+        browser = await chromium.launch({ headless: true });
+        const context = await browser.newContext({
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport: { width: 1920, height: 1080 }
+        });
+        const page = await context.newPage();
+
+        // Native Stealth
+        await page.addInitScript(() => {
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        });
+
+        console.log(`User ${req.user.email} logging into McGraw Hill...`);
+        await page.goto("https://accounts.mheducation.com/login");
+        await page.waitForLoadState("networkidle");
+
+        await page.waitForSelector("input[type='email']", { timeout: 15000 });
+        await page.type("input[type='email']", mheUsername, { delay: 50 });
+        await page.type("input[type='password']", mhePassword, { delay: 50 });
+
+        // Wait for navigation after clicking sign in
+        await Promise.all([
+            page.waitForNavigation({ timeout: 30000 }),
+            page.click("button:has-text('Sign In')")
+        ]);
+
+        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(3000);
+
+        console.log(`Fetching assignments for section ${sectionId}...`);
+        const classUrl = `https://newconnect.mheducation.com/student/class/section/${sectionId}`;
+
+        // Actively wait for the specific API response that contains "studentAssignments"
+        const responsePromise = page.waitForResponse(response => 
+            response.url().includes("studentAssignments") && response.status() === 200, 
+            { timeout: 30000 }
+        );
+
+        await page.goto(classUrl, { waitUntil: "domcontentloaded" });
+
+        // Safely extract the JSON immediately while the browser is still open
+        const responseInfo = await responsePromise;
+        const rawApiData = await responseInfo.json();
+
+        // --- Parse and Filter the Data ---
+        if (rawApiData && rawApiData.sectionAssignments) {
+            const courseDetails = {};
+            
+            for (const assignment of rawApiData.sectionAssignments) {
+                courseDetails[assignment.id] = {
+                    name: assignment.name || 'Unknown',
+                    due: assignment.endDateTime || 'No due date'
+                };
+            }
+
+            const assignmentsList = [];
+
+            for (const studentStatus of (rawApiData.studentAssignments || [])) {
+                const assignmentId = studentStatus.sectionAssignment;
+                const status = studentStatus.status || 'UNKNOWN';
+                
+                const details = courseDetails[assignmentId];
+                
+                if (details) {
+                    // Format the due date string cleanly
+                    const dueDateClean = details.due.replace("T", " ").substring(0, 16);
+                    
+                    // --- NEW FILTER APPLIED HERE ---
+                    if (dueDateClean >= "2026-10-11") {
+                        assignmentsList.push({
+                            status: status,
+                            dueDate: dueDateClean,
+                            name: details.name
+                        });
+                    }
+                }
+            }
+            return res.status(200).json({
+                success: true,
+                count: assignmentsList.length,
+                data: assignmentsList
+            });
+        } else {
+            return res.status(500).json({ error: "Failed to capture the assignment data. The data structure might have changed." });
+        }
+
+    } catch (error) {
+        console.error(`Browser automation error for user ${req.user.email}: ${error.message}`);
+        return res.status(500).json({ error: "Failed to scrape assignments. Invalid credentials or timeout." });
+    } finally {
+        if (browser) {
+            await browser.close();
+        }
     }
 });
 
@@ -1310,6 +1426,7 @@ app.listen(PORT, () => {
     // Keeps the instance alive
     setInterval(pingServer, PING_INTERVAL_MS);
 });
+
 // require("dotenv").config();
 // const express = require('express');
 // const cors = require('cors');
@@ -2465,7 +2582,7 @@ app.listen(PORT, () => {
 // let lastFetchTime = 0;
 // let isFetching = false;
 // let activeFetchPromise = null;
-// const CACHE_TTL_MS = 10 * 60 * 1000; // 3 minutes
+// const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // const updateCache = async () => {
 //     if (isFetching) return activeFetchPromise;
@@ -2531,12 +2648,12 @@ app.listen(PORT, () => {
 //     } catch (e) {
 //         console.error("Daemon error:", e.message);
 //     } finally {
-//         // Wait strictly 3 minutes AFTER the previous run finishes and memory is cleared
+//         // Wait strictly configured time AFTER the previous run finishes and memory is cleared
 //         setTimeout(runBackgroundDaemon, CACHE_TTL_MS);
 //     }
 // };
 
-// // --- ENDPOINT: Instant Return ---
+// // --- REFACTORED ENDPOINT: ETag Caching for Massive Bandwidth Savings ---
 // app.get('/api/timetable/:section', authenticateUser, async (req, res) => {
 //     const section = req.params.section.toUpperCase();
 //     const forceRefresh = req.query.force === 'true';
@@ -2548,28 +2665,43 @@ app.listen(PORT, () => {
 //     });
 
 //     try {
-//         // 1. If user forces a refresh via the Sync button, make them wait for the latest
+//         // 1. If user forces a refresh via the Sync button
 //         if (forceRefresh) {
 //             await updateCache();
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         }
 
-//         // 2. Return instantly from RAM. The Safe Daemon guarantees it is fresh (<= 3 mins old)
+//         // 2. Return instantly from RAM, leveraging HTTP ETags to save Bandwidth
 //         if (globalCache[section]) {
+//             // Use lastFetchTime as a strict version identifier
+//             const eTag = `W/"${lastFetchTime}"`;
+//             res.setHeader('ETag', eTag);
+            
+//             // Let the browser confidently hold this data for 1 minute before even bothering the server again
+//             res.setHeader('Cache-Control', 'public, max-age=60'); 
+
+//             if (req.headers['if-none-match'] === eTag) {
+//                 // Return 304 (Not Modified). This saves transferring the 100kb+ JSON payload entirely.
+//                 return res.status(304).end();
+//             }
+
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         }
 
-//         // 3. First boot only: If RAM is completely empty, user waits.
+//         // 3. First boot only: If server just woke up and RAM is completely empty, user waits.
 //         console.log(`[Cache] Empty memory. User must wait for initial download.`);
 //         await updateCache();
         
 //         if (globalCache[section]) {
+//             const eTag = `W/"${lastFetchTime}"`;
+//             res.setHeader('ETag', eTag);
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         } else {
 //             return res.status(404).json({ error: `Section ${section} not found in ERP data.` });
 //         }
 
 //     } catch (error) {
+//         // Last-resort fallback to serve stale data if background update crashes during a boot
 //         if (globalCache[section]) {
 //             return res.json({ ...globalCache[section], meta: buildMeta() });
 //         }
@@ -2607,4 +2739,3 @@ app.listen(PORT, () => {
 //     // Keeps the instance alive
 //     setInterval(pingServer, PING_INTERVAL_MS);
 // });
-

@@ -5,7 +5,7 @@ import {
   Clock, User as UserIcon, Info, Calendar, Table2, CalendarSync, LogOut, 
   RefreshCw, ChevronLeft, ChevronRight, Hand, MessageSquare, Lock, ListTodo, 
   Settings, Download, Share, ClipboardCheck, ChevronDown, ChevronUp, AlertCircle, 
-  Eye, EyeOff, X, Sparkles, Activity, Users, MousePointer2, LayoutDashboard 
+  Eye, EyeOff, X, Sparkles, BookOpen, CheckCircle2, Clock3
 } from 'lucide-react';
 import { TodoModal, TodoSummaryBar } from './TodoWidgets';
 import { Analytics } from '@vercel/analytics/react';
@@ -54,7 +54,11 @@ export const trackEvent = (eventType, eventName, metadata = {}) => {
 function App() {
   const [user, setUser] = useState(null);
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState('timetable');
+  
+  // Tab state synced with URL route (/assign or /)
+  const [activeTab, setActiveTab] = useState(() => {
+    return window.location.pathname === '/assign' ? 'assignments' : 'timetable';
+  });
 
   const [section, setSection] = useState(() => {
     const stored = localStorage.getItem(SECTION_STORAGE_KEY);
@@ -118,12 +122,33 @@ function App() {
   const progressPollRef = useRef(null);
   const isFirstSectionRender = useRef(true);
 
+  // --- MCGRAW HILL ASSIGNMENTS STATE ---
+  const [mheUsername, setMheUsername] = useState(() => localStorage.getItem('iimt_mhe_user') || '');
+  const [mhePassword, setMhePassword] = useState('');
+  const [mheSectionId, setMheSectionId] = useState(() => localStorage.getItem('iimt_mhe_section') || '');
+  const [assignments, setAssignments] = useState(null);
+  const [isFetchingAssignments, setIsFetchingAssignments] = useState(false);
+  const [assignmentsError, setAssignmentsError] = useState('');
+
   const [showFeatureBanner, setShowFeatureBanner] = useState(false);
 
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [isInstallable, setIsInstallable] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSPrompt, setShowIOSPrompt] = useState(false);
+
+  // Listen for browser forward/back buttons or manual route navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      if (window.location.pathname === '/assign') {
+        setActiveTab('assignments');
+      } else if (activeTab === 'assignments') {
+        setActiveTab('timetable');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [activeTab]);
 
   useEffect(() => {
     const userAgent = window.navigator.userAgent.toLowerCase();
@@ -198,7 +223,7 @@ function App() {
       try {
         await navigator.share({
           title: 'IIM Trichy PGPM Portal',
-          text: 'Check out this awesome app to track your live timetable and OLT attendance in one place!',
+          text: 'Check out this awesome app to track your live timetable, assignments, and OLT attendance in one place!',
           url: window.location.origin,
         });
       } catch (err) {
@@ -340,6 +365,11 @@ function App() {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
+    if (tab === 'assignments') {
+      window.history.pushState({}, '', '/assign');
+    } else if (window.location.pathname === '/assign') {
+      window.history.pushState({}, '', '/');
+    }
     trackEvent('tab_click', `tab_${tab}`);
   };
 
@@ -532,7 +562,6 @@ function App() {
     }
   };
 
-  // --- REFACTORED: Local-First Caching Logic ---
   const fetchTimetable = async (
     sec,
     forceBackendSync = false,
@@ -542,7 +571,6 @@ function App() {
     
     let hasLocalData = !!cache[sec];
 
-    // 1. Instantly load from local storage if memory cache is empty
     if (!hasLocalData) {
       const stored = localStorage.getItem(localKey);
       if (stored) {
@@ -553,7 +581,6 @@ function App() {
           setSummaryData(parsed.summary);
           if (parsed.meta) setSyncMeta(parsed.meta);
           
-          // Apply date logic to instantly snap to today without loaders
           if (!selectedDate) applyDateLogic(parsed.timetable);
           
           hasLocalData = true;
@@ -563,7 +590,6 @@ function App() {
       }
     }
 
-    // 2. Only show loading screen if we absolutely have no data
     const shouldShowLoader = !hasLocalData && !isBackgroundRefresh;
 
     if (shouldShowLoader) {
@@ -578,14 +604,12 @@ function App() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // HTTP 304 (Not Modified) or empty body means data is unchanged. Skip update.
       if (!res.data || !res.data.timetable) return;
 
       const data = res.data.timetable;
       const summary = res.data.summary;
       const meta = res.data.meta;
 
-      // Only re-apply date boundaries if forced or if we didn't have data initially
       if (!hasLocalData || forceBackendSync) {
         applyDateLogic(data);
       }
@@ -596,12 +620,10 @@ function App() {
 
       const cachePayload = { timetable: data, summary, meta };
       
-      // Update memory & local browser storage silently
       setCache(prevCache => ({ ...prevCache, [sec]: cachePayload }));
       localStorage.setItem(localKey, JSON.stringify(cachePayload));
 
     } catch (err) {
-      // Ignore background errors if we already rendered the UI from local cache
       if (shouldShowLoader) {
         if (err.response?.status === 429) {
           setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
@@ -663,6 +685,48 @@ function App() {
     } finally {
       setIsFetchingAttendance(false);
       stopProgressPolling();
+    }
+  };
+
+  const fetchMcGrawAssignments = async () => {
+    if (!mheUsername || !mhePassword || !mheSectionId) {
+      setAssignmentsError('Please fill in all McGraw Hill credentials and Class Section ID.');
+      return;
+    }
+
+    trackEvent('button_click', 'fetch_mcgraw_assignments');
+    setIsFetchingAssignments(true);
+    setAssignmentsError('');
+
+    localStorage.setItem('iimt_mhe_user', mheUsername);
+    localStorage.setItem('iimt_mhe_section', mheSectionId);
+
+    try {
+      const token = localStorage.getItem('iimt_token');
+      const res = await axios.post(
+        `${API_BASE_URL}/api/assignments/fetch`,
+        {
+          mheUsername,
+          mhePassword,
+          sectionId: mheSectionId
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+
+      if (res.data && res.data.success) {
+        setAssignments(res.data.data);
+      } else {
+        setAssignmentsError('Failed to parse assignments data.');
+      }
+    } catch (err) {
+      setAssignmentsError(
+        err.response?.data?.error ||
+        'Error scraping assignments. Please check your credentials and Section ID.'
+      );
+    } finally {
+      setIsFetchingAssignments(false);
     }
   };
 
@@ -1156,20 +1220,20 @@ function App() {
 
       .mobile-bottom-nav {
         display: grid !important;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         align-items: center;
-        gap: 6px;
+        gap: 4px;
         position: fixed;
         left: 50%;
         bottom: max(12px, env(safe-area-inset-bottom, 12px));
         transform: translateX(-50%);
-        width: calc(100% - 28px);
+        width: calc(100% - 20px);
         max-width: 560px;
-        min-height: 88px;
-        padding: 10px;
+        min-height: 80px;
+        padding: 8px;
         background: #1b2332;
         border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 30px;
+        border-radius: 26px;
         box-shadow:
           0 18px 45px rgba(10, 16, 28, 0.28),
           0 4px 14px rgba(10, 16, 28, 0.18);
@@ -1182,19 +1246,19 @@ function App() {
       .mobile-bottom-nav-btn {
         position: relative;
         min-width: 0;
-        min-height: 68px;
-        padding: 10px 8px;
+        min-height: 62px;
+        padding: 6px 4px;
         border: 0;
-        border-radius: 22px;
+        border-radius: 18px;
         background: transparent;
         color: #aeb5c2;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 6px;
+        gap: 4px;
         font-family: inherit;
-        font-size: 0.98rem;
+        font-size: 0.78rem;
         font-weight: 500;
         line-height: 1.1;
         cursor: pointer;
@@ -1228,8 +1292,8 @@ function App() {
 
       .mobile-bottom-nav-badge {
         position: absolute;
-        top: 13px;
-        right: 22%;
+        top: 10px;
+        right: 18%;
         width: 8px;
         height: 8px;
         border-radius: 50%;
@@ -1266,6 +1330,73 @@ function App() {
       }
     }
 
+    /* --- ASSIGNMENTS STYLES --- */
+    .assignments-container {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .assignments-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .assignment-card {
+      background: #ffffff;
+      color: #1e293b;
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s ease;
+    }
+
+    .assignment-card:hover {
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.06);
+      transform: translateY(-1px);
+    }
+
+    .assignment-title {
+      font-weight: 700;
+      font-size: 1rem;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+
+    .assignment-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: #64748b;
+    }
+
+    .assignment-status-tag {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-completed {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .status-pending {
+      background: #fef9c3;
+      color: #a16207;
+    }
+
     /* --- SATISFYING LOADER ANIMATION --- */
     .satisfying-loader-container {
       display: flex;
@@ -1291,24 +1422,15 @@ function App() {
       box-shadow: 0 4px 10px rgba(219, 163, 21, 0.3);
     }
 
-    .dot-wave .dot:nth-child(1) {
-      animation-delay: 0s;
-    }
-
-    .dot-wave .dot:nth-child(2) {
-      animation-delay: 0.15s;
-    }
-
-    .dot-wave .dot:nth-child(3) {
-      animation-delay: 0.3s;
-    }
+    .dot-wave .dot:nth-child(1) { animation-delay: 0s; }
+    .dot-wave .dot:nth-child(2) { animation-delay: 0.15s; }
+    .dot-wave .dot:nth-child(3) { animation-delay: 0.3s; }
 
     @keyframes smooth-wave {
       0%, 100% {
         transform: translateY(0) scale(0.8);
         opacity: 0.3;
       }
-
       50% {
         transform: translateY(-14px) scale(1.1);
         opacity: 1;
@@ -1324,13 +1446,8 @@ function App() {
     }
 
     @keyframes pulse-text {
-      0%, 100% {
-        opacity: 0.5;
-      }
-
-      50% {
-        opacity: 1;
-      }
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
     }
 
     /* --- PREMIUM SWIPE NAVIGATION --- */
@@ -1357,52 +1474,23 @@ function App() {
     }
 
     @keyframes premiumSlideInRight {
-      from {
-        transform: translateX(45px) scale(0.98);
-        opacity: 0;
-      }
-
-      to {
-        transform: translateX(0) scale(1);
-        opacity: 1;
-      }
+      from { transform: translateX(45px) scale(0.98); opacity: 0; }
+      to { transform: translateX(0) scale(1); opacity: 1; }
     }
 
     @keyframes premiumSlideInLeft {
-      from {
-        transform: translateX(-45px) scale(0.98);
-        opacity: 0;
-      }
-
-      to {
-        transform: translateX(0) scale(1);
-        opacity: 1;
-      }
+      from { transform: translateX(-45px) scale(0.98); opacity: 0; }
+      to { transform: translateX(0) scale(1); opacity: 1; }
     }
 
     @keyframes premiumFadeIn {
-      from {
-        transform: translateY(12px) scale(0.99);
-        opacity: 0;
-      }
-
-      to {
-        transform: translateY(0) scale(1);
-        opacity: 1;
-      }
+      from { transform: translateY(12px) scale(0.99); opacity: 0; }
+      to { transform: translateY(0) scale(1); opacity: 1; }
     }
 
-    .swipe-left {
-      animation: premiumSlideInRight 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-
-    .swipe-right {
-      animation: premiumSlideInLeft 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-
-    .fade-in {
-      animation: premiumFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
+    .swipe-left { animation: premiumSlideInRight 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    .swipe-right { animation: premiumSlideInLeft 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    .fade-in { animation: premiumFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
     /* --- TUTORIAL OVERLAY --- */
     .swipe-tutorial-overlay {
@@ -1419,13 +1507,8 @@ function App() {
     }
 
     @keyframes tutorialOverlayFade {
-      from {
-        opacity: 0;
-      }
-
-      to {
-        opacity: 1;
-      }
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
 
     .swipe-tutorial-card {
@@ -1438,15 +1521,8 @@ function App() {
     }
 
     @keyframes tutorialCardPop {
-      from {
-        opacity: 0;
-        transform: translateY(10px) scale(0.95);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
+      from { opacity: 0; transform: translateY(10px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     .swipe-tutorial-track {
@@ -1471,23 +1547,12 @@ function App() {
       animation: tutorialTrackPulse 1.6s ease-in-out infinite;
     }
 
-    .swipe-tutorial-track::before {
-      left: 0;
-    }
-
-    .swipe-tutorial-track::after {
-      right: 0;
-      animation-delay: 0.3s;
-    }
+    .swipe-tutorial-track::before { left: 0; }
+    .swipe-tutorial-track::after { right: 0; animation-delay: 0.3s; }
 
     @keyframes tutorialTrackPulse {
-      0%, 100% {
-        opacity: 0.15;
-      }
-
-      50% {
-        opacity: 0.5;
-      }
+      0%, 100% { opacity: 0.15; }
+      50% { opacity: 0.5; }
     }
 
     .swipe-tutorial-hand {
@@ -1497,28 +1562,11 @@ function App() {
     }
 
     @keyframes tutorialHandSwipe {
-      0% {
-        transform: translateX(38px) rotate(-6deg);
-        opacity: 0;
-      }
-
-      14% {
-        opacity: 1;
-      }
-
-      50% {
-        transform: translateX(-38px) rotate(6deg);
-        opacity: 1;
-      }
-
-      68% {
-        opacity: 0;
-      }
-
-      100% {
-        transform: translateX(38px) rotate(-6deg);
-        opacity: 0;
-      }
+      0% { transform: translateX(38px) rotate(-6deg); opacity: 0; }
+      14% { opacity: 1; }
+      50% { transform: translateX(-38px) rotate(6deg); opacity: 1; }
+      68% { opacity: 0; }
+      100% { transform: translateX(38px) rotate(-6deg); opacity: 0; }
     }
 
     .swipe-tutorial-text {
@@ -1536,7 +1584,6 @@ function App() {
       margin-top: 0.15rem;
     }
 
-    /* --- FIX: FORCED TEXT VISIBILITY ON ALL INPUTS & TEXTAREAS --- */
     .modal-content textarea,
     .todo-input-form input {
       color: #333 !important;
@@ -1569,15 +1616,8 @@ function App() {
     }
 
     @keyframes popIn {
-      0% {
-        opacity: 0;
-        transform: scale(0.95);
-      }
-
-      100% {
-        opacity: 1;
-        transform: scale(1);
-      }
+      0% { opacity: 0; transform: scale(0.95); }
+      100% { opacity: 1; transform: scale(1); }
     }
 
     .modal-content textarea {
@@ -1636,7 +1676,6 @@ function App() {
       text-decoration: underline;
     }
 
-    /* --- OLT POPUP GLOW --- */
     .olt-glow-modal {
       background: linear-gradient(to bottom, #fff, #fefdf9);
       border: 1px solid var(--accent-gold);
@@ -1650,7 +1689,6 @@ function App() {
       margin: 0;
     }
 
-    /* --- SETTINGS MODAL --- */
     .settings-section-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -1680,7 +1718,6 @@ function App() {
       font-weight: 600;
     }
 
-    /* --- FEATURE BANNER --- */
     .feature-banner {
       background: linear-gradient(
         135deg,
@@ -1785,7 +1822,6 @@ function App() {
       color: #fff;
     }
 
-    /* --- LIVE DATA BANNER --- */
     .live-data-banner {
       display: flex;
       align-items: center;
@@ -1811,29 +1847,14 @@ function App() {
     }
 
     @keyframes liveDotPulse {
-      0% {
-        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
-      }
-
-      70% {
-        box-shadow: 0 0 0 6px rgba(76, 175, 80, 0);
-      }
-
-      100% {
-        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
-      }
+      0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5); }
+      70% { box-shadow: 0 0 0 6px rgba(76, 175, 80, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
     }
 
-    .live-data-banner strong {
-      font-weight: 700;
-    }
+    .live-data-banner strong { font-weight: 700; }
+    .live-data-meta { color: #4a7a4c; opacity: 0.85; }
 
-    .live-data-meta {
-      color: #4a7a4c;
-      opacity: 0.85;
-    }
-
-    /* --- SESSION NUMBER BADGE --- */
     .session-badge {
       font-size: 0.7rem;
       font-weight: 700;
@@ -1847,7 +1868,6 @@ function App() {
       display: inline-block;
     }
 
-    /* --- TO-DO WIDGET STYLES --- */
     .class-header-flex {
       display: flex;
       justify-content: space-between;
@@ -1868,9 +1888,7 @@ function App() {
       transition: all 0.2s ease;
     }
 
-    .add-task-btn:hover {
-      background: rgba(219, 163, 21, 0.2);
-    }
+    .add-task-btn:hover { background: rgba(219, 163, 21, 0.2); }
 
     .task-indicator {
       position: absolute;
@@ -1895,13 +1913,8 @@ function App() {
     }
 
     @keyframes fadeOverlay {
-      from {
-        opacity: 0;
-      }
-
-      to {
-        opacity: 1;
-      }
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
 
     .todo-bottom-sheet {
@@ -1920,13 +1933,8 @@ function App() {
     }
 
     @keyframes slideUp {
-      from {
-        transform: translateY(100%);
-      }
-
-      to {
-        transform: translateY(0);
-      }
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
     }
 
     .todo-sheet-header {
@@ -1937,17 +1945,8 @@ function App() {
       padding-bottom: 1rem;
     }
 
-    .todo-subject {
-      margin: 0;
-      font-size: 1.2rem;
-      color: #333;
-    }
-
-    .todo-date {
-      margin: 4px 0 0 0;
-      font-size: 0.85rem;
-      color: #888;
-    }
+    .todo-subject { margin: 0; font-size: 1.2rem; color: #333; }
+    .todo-date { margin: 4px 0 0 0; font-size: 0.85rem; color: #888; }
 
     .todo-close-btn {
       background: none;
@@ -1959,9 +1958,7 @@ function App() {
       display: flex;
     }
 
-    .todo-close-btn:hover {
-      background: #f5f5f5;
-    }
+    .todo-close-btn:hover { background: #f5f5f5; }
 
     .todo-list-container {
       flex: 1;
@@ -1992,14 +1989,8 @@ function App() {
       color: #333;
     }
 
-    .todo-item.completed {
-      opacity: 0.6;
-    }
-
-    .todo-item.completed .todo-text {
-      text-decoration: line-through;
-      color: #888;
-    }
+    .todo-item.completed { opacity: 0.6; }
+    .todo-item.completed .todo-text { text-decoration: line-through; color: #888; }
 
     .todo-check-btn {
       background: none;
@@ -2010,11 +2001,7 @@ function App() {
       align-items: center;
     }
 
-    .todo-text {
-      flex: 1;
-      font-size: 0.95rem;
-      word-break: break-word;
-    }
+    .todo-text { flex: 1; font-size: 0.95rem; word-break: break-word; }
 
     .todo-delete-btn {
       background: none;
@@ -2026,9 +2013,7 @@ function App() {
       display: flex;
     }
 
-    .todo-delete-btn:hover {
-      background: #fff1f0;
-    }
+    .todo-delete-btn:hover { background: #fff1f0; }
 
     .todo-input-form {
       display: flex;
@@ -2046,9 +2031,7 @@ function App() {
       outline: none;
     }
 
-    .todo-input-form input:focus {
-      border-color: var(--accent-gold);
-    }
+    .todo-input-form input:focus { border-color: var(--accent-gold); }
 
     .todo-input-form button {
       background: var(--accent-gold);
@@ -2062,10 +2045,7 @@ function App() {
       justify-content: center;
     }
 
-    .todo-input-form button:disabled {
-      background: #e0c88b;
-      cursor: not-allowed;
-    }
+    .todo-input-form button:disabled { background: #e0c88b; cursor: not-allowed; }
 
     .todo-summary-bar {
       position: fixed;
@@ -2091,9 +2071,7 @@ function App() {
       }
     }
 
-    .todo-summary-bar.expanded {
-      max-height: 40vh;
-    }
+    .todo-summary-bar.expanded { max-height: 40vh; }
 
     .todo-summary-header {
       display: flex;
@@ -2146,14 +2124,8 @@ function App() {
       margin-bottom: 6px;
     }
 
-    .todo-summary-item:last-child {
-      margin-bottom: 0;
-    }
-
-    .todo-summary-item.completed {
-      opacity: 0.5;
-      text-decoration: line-through;
-    }
+    .todo-summary-item:last-child { margin-bottom: 0; }
+    .todo-summary-item.completed { opacity: 0.5; text-decoration: line-through; }
 
     .todo-summary-text {
       flex: 1;
@@ -2162,7 +2134,6 @@ function App() {
       margin-top: -1px;
     }
 
-    /* --- MOBILE REFRESH FAB --- */
     .mobile-refresh-fab {
       display: none;
       position: fixed;
@@ -2181,17 +2152,9 @@ function App() {
       cursor: pointer;
     }
 
-    .spinning {
-      animation: spin 1s linear infinite;
-    }
+    .spinning { animation: spin 1s linear infinite; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
 
-    @keyframes spin {
-      100% {
-        transform: rotate(360deg);
-      }
-    }
-
-    /* --- ADMIN PORTAL DASHBOARD LAYOUT & CHARTS (REVAMPED) --- */
     .admin-container-fluid {
       font-family: 'Inter', system-ui, sans-serif;
       color: #0f172a;
@@ -2241,9 +2204,7 @@ function App() {
       transition: opacity 0.2s;
     }
 
-    .admin-login button:hover {
-      opacity: 0.9;
-    }
+    .admin-login button:hover { opacity: 0.9; }
 
     .admin-dashboard-layout {
       display: flex;
@@ -2307,7 +2268,6 @@ function App() {
       margin: 0 0 1.5rem 0;
     }
 
-    /* Stats grid */
     .admin-stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -2340,11 +2300,8 @@ function App() {
       color: #0f172a;
     }
 
-    .admin-stat-card .value.gold {
-      color: var(--accent-gold);
-    }
+    .admin-stat-card .value.gold { color: var(--accent-gold); }
 
-    /* CSS Charts */
     .admin-charts-container {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
@@ -2353,9 +2310,7 @@ function App() {
     }
 
     @media (max-width: 768px) {
-      .admin-charts-container {
-        grid-template-columns: 1fr;
-      }
+      .admin-charts-container { grid-template-columns: 1fr; }
     }
 
     .admin-chart-box {
@@ -2404,9 +2359,7 @@ function App() {
       transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .css-bar.green {
-      background: #10b981;
-    }
+    .css-bar.green { background: #10b981; }
 
     .css-bar:hover::after {
       content: attr(data-val);
@@ -2431,7 +2384,6 @@ function App() {
       text-align: center;
     }
 
-    /* Lists */
     .interaction-list {
       display: flex;
       flex-direction: column;
@@ -2449,9 +2401,7 @@ function App() {
       transition: background 0.2s;
     }
 
-    .interaction-row:hover {
-      background: #f1f5f9;
-    }
+    .interaction-row:hover { background: #f1f5f9; }
 
     .interaction-row-name {
       font-weight: 600;
@@ -2473,7 +2423,6 @@ function App() {
       box-shadow: 0 1px 2px rgba(0,0,0,0.02);
     }
 
-    /* User Database Cards */
     .active-user-card {
       display: flex;
       align-items: center;
@@ -2500,10 +2449,7 @@ function App() {
       border: 2px solid #f1f5f9;
     }
 
-    .active-user-info {
-      flex: 1;
-      overflow: hidden;
-    }
+    .active-user-info { flex: 1; overflow: hidden; }
 
     .active-user-name {
       font-weight: 700;
@@ -2523,9 +2469,7 @@ function App() {
       gap: 6px;
     }
 
-    .active-user-time {
-      text-align: right;
-    }
+    .active-user-time { text-align: right; }
 
     .active-user-time-val {
       font-size: 0.9rem;
@@ -2551,7 +2495,6 @@ function App() {
       box-shadow: 0 0 0 2px #d1fae5;
     }
 
-    /* Feedback Cards */
     .feedback-card {
       background: #fefce8;
       padding: 20px;
@@ -2570,17 +2513,8 @@ function App() {
       margin-bottom: 10px;
     }
 
-    .feedback-name {
-      font-weight: 700;
-      font-size: 1rem;
-      color: #0f172a;
-    }
-
-    .feedback-time {
-      font-size: 0.8rem;
-      color: #854d0e;
-      font-weight: 500;
-    }
+    .feedback-name { font-weight: 700; font-size: 1rem; color: #0f172a; }
+    .feedback-time { font-size: 0.8rem; color: #854d0e; font-weight: 500; }
 
     .feedback-msg {
       margin: 0;
@@ -2590,7 +2524,6 @@ function App() {
       line-height: 1.5;
     }
 
-    /* --- ATTENDANCE UI --- */
     .attendance-container {
       max-width: 800px;
       margin: 0 auto;
@@ -2608,11 +2541,7 @@ function App() {
       text-align: center;
     }
 
-    .creds-card h3 {
-      color: #111;
-      margin-top: 0;
-      margin-bottom: 0.5rem;
-    }
+    .creds-card h3 { color: #111; margin-top: 0; margin-bottom: 0.5rem; }
 
     .input-group {
       display: flex;
@@ -2632,10 +2561,7 @@ function App() {
       background: #fff;
     }
 
-    .input-group input:focus {
-      outline: none;
-      border-color: var(--accent-gold);
-    }
+    .input-group input:focus { outline: none; border-color: var(--accent-gold); }
 
     .attendance-summary-card {
       background: linear-gradient(135deg, #1e1e1e, #2d2d2d);
@@ -2648,9 +2574,7 @@ function App() {
       box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
 
-    .summary-stat {
-      text-align: center;
-    }
+    .summary-stat { text-align: center; }
 
     .summary-stat .value {
       font-size: 1.8rem;
@@ -2685,16 +2609,8 @@ function App() {
       border-bottom: 1px solid transparent;
     }
 
-    .subject-header:hover {
-      background: #f0f0f0;
-    }
-
-    .subject-title {
-      font-weight: 700;
-      font-size: 0.95rem;
-      flex: 1;
-      color: #111;
-    }
+    .subject-header:hover { background: #f0f0f0; }
+    .subject-title { font-weight: 700; font-size: 0.95rem; flex: 1; color: #111; }
 
     .subject-stats {
       display: flex;
@@ -2712,10 +2628,7 @@ function App() {
       overflow: hidden;
     }
 
-    .progress-fill {
-      height: 100%;
-      border-radius: 3px;
-    }
+    .progress-fill { height: 100%; border-radius: 3px; }
 
     .class-list {
       padding: 0 1.2rem;
@@ -2741,9 +2654,7 @@ function App() {
       color: #444;
     }
 
-    .class-row:last-child {
-      border-bottom: none;
-    }
+    .class-row:last-child { border-bottom: none; }
 
     .status-badge {
       padding: 2px 8px;
@@ -2752,22 +2663,11 @@ function App() {
       font-size: 0.75rem;
     }
 
-    .status-p {
-      background: rgba(76, 175, 80, 0.1);
-      color: #2e7d32;
-    }
+    .status-p { background: rgba(76, 175, 80, 0.1); color: #2e7d32; }
+    .status-a { background: rgba(244, 67, 54, 0.1); color: #d32f2f; }
 
-    .status-a {
-      background: rgba(244, 67, 54, 0.1);
-      color: #d32f2f;
-    }
+    .mismatch-card { max-width: 460px; margin: 3rem auto; }
 
-    .mismatch-card {
-      max-width: 460px;
-      margin: 3rem auto;
-    }
-
-    /* --- LIVE ATTENDANCE FETCH PROGRESS --- */
     .attendance-fetch-progress {
       display: flex;
       flex-direction: column;
@@ -2853,30 +2753,18 @@ function App() {
       height: 7px;
       border-radius: 50%;
       background: rgba(219, 163, 21, 0.2);
-      transition:
-        background 0.4s ease,
-        transform 0.4s ease;
+      transition: background 0.4s ease, transform 0.4s ease;
     }
 
-    .fetch-progress-dot.done {
-      background: var(--accent-gold, #dba315);
-    }
-
+    .fetch-progress-dot.done { background: var(--accent-gold, #dba315); }
     .fetch-progress-dot.current {
       background: var(--accent-gold, #dba315);
       animation: fetchDotPulse 1.1s ease-in-out infinite;
     }
 
     @keyframes fetchDotPulse {
-      0%, 100% {
-        transform: scale(1);
-        opacity: 1;
-      }
-
-      50% {
-        transform: scale(1.5);
-        opacity: 0.6;
-      }
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.5); opacity: 0.6; }
     }
   `;
 
@@ -2970,6 +2858,116 @@ function App() {
   };
 
   const nextRefreshMins = minutesToNextRefresh();
+
+  const renderAssignmentsTab = () => {
+    return (
+      <div className="assignments-container">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <h2 className="view-title" style={{ margin: 0 }}>McGraw Hill Connect Assignments</h2>
+        </div>
+
+        <div className="creds-card">
+          <BookOpen size={40} color="var(--accent-gold)" style={{ marginBottom: '0.5rem' }} />
+          <h3>Extract McGraw Hill Connect Assignments</h3>
+          <p style={{ color: '#666', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
+            Enter your credentials and your class section ID to automatically fetch all upcoming assignments due from Oct 11, 2026 onwards.
+          </p>
+
+          <div className="input-group">
+            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>McGraw Hill Username / Email</label>
+            <input
+              type="email"
+              placeholder="e.g. student@iimtrichy.ac.in"
+              value={mheUsername}
+              onChange={(e) => setMheUsername(e.target.value)}
+            />
+          </div>
+
+          <div className="input-group">
+            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>McGraw Hill Password</label>
+            <input
+              type="password"
+              placeholder="Enter your McGraw Hill password"
+              value={mhePassword}
+              onChange={(e) => setMhePassword(e.target.value)}
+            />
+          </div>
+
+          <div className="input-group">
+            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Class Section ID</label>
+            <input
+              type="text"
+              placeholder="e.g. 15829471"
+              value={mheSectionId}
+              onChange={(e) => setMheSectionId(e.target.value)}
+            />
+          </div>
+
+          {assignmentsError && (
+            <div style={{ background: '#fff1f0', color: '#d32f2f', padding: '10px 14px', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={16} />
+              <span>{assignmentsError}</span>
+            </div>
+          )}
+
+          <button
+            className="btn-submit"
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '12px' }}
+            onClick={fetchMcGrawAssignments}
+            disabled={isFetchingAssignments}
+          >
+            {isFetchingAssignments ? (
+              <>
+                <RefreshCw size={18} className="spinning" />
+                <span>Launching Browser Automation Scraper...</span>
+              </>
+            ) : (
+              <>
+                <BookOpen size={18} />
+                <span>Extract Assignments</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {assignments && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#333' }}>
+                Assignments ({assignments.length})
+              </h3>
+            </div>
+
+            {assignments.length === 0 ? (
+              <div className="empty-state">No upcoming assignments found due after Oct 11, 2026.</div>
+            ) : (
+              <div className="assignments-grid">
+                {assignments.map((item, idx) => {
+                  const isSubmitted = item.status === 'SUBMITTED' || item.status === 'COMPLETED';
+                  return (
+                    <div key={idx} className="assignment-card">
+                      <div>
+                        <div className="assignment-title">{item.name}</div>
+                        <div className="assignment-meta">
+                          <Clock3 size={15} color="var(--accent-gold)" />
+                          <span>Due: {item.dueDate}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <span className={`assignment-status-tag ${isSubmitted ? 'status-completed' : 'status-pending'}`}>
+                          {item.status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderAttendanceTab = () => {
     if (!hasOltCreds || showCredsForm) {
@@ -4061,6 +4059,20 @@ function App() {
 
             <button
               className={`nav-btn ${
+                activeTab === 'assignments'
+                  ? 'active'
+                  : ''
+              }`}
+              onClick={() =>
+                handleTabChange('assignments')
+              }
+            >
+              <BookOpen size={18} />
+              Assignments
+            </button>
+
+            <button
+              className={`nav-btn ${
                 activeTab === 'summary'
                   ? 'active'
                   : ''
@@ -4107,7 +4119,7 @@ function App() {
             </button>
           </div>
 
-          {activeTab !== 'attendance' && (
+          {activeTab !== 'attendance' && activeTab !== 'assignments' && (
             <div className="section-selector-container">
               <span className="section-label">
                 Select Section
@@ -4329,6 +4341,8 @@ function App() {
                     </div>
                   </div>
                 )}
+
+              {activeTab === 'assignments' && renderAssignmentsTab()}
 
               {activeTab === 'attendance' &&
                 renderAttendanceTab()}
@@ -4762,8 +4776,29 @@ function App() {
                 : undefined
             }
           >
-            <Calendar size={30} />
+            <Calendar size={24} />
             <span>Timetable</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-bottom-nav-btn ${
+              activeTab === 'assignments'
+                ? 'active'
+                : ''
+            }`}
+            onClick={() =>
+              handleTabChange('assignments')
+            }
+            aria-label="Assignments"
+            aria-current={
+              activeTab === 'assignments'
+                ? 'page'
+                : undefined
+            }
+          >
+            <BookOpen size={24} />
+            <span>Assign</span>
           </button>
 
           <button
@@ -4783,7 +4818,7 @@ function App() {
                 : undefined
             }
           >
-            <Table2 size={30} />
+            <Table2 size={24} />
             <span>Summary</span>
           </button>
 
@@ -4806,7 +4841,7 @@ function App() {
                 : undefined
             }
           >
-            <ClipboardCheck size={30} />
+            <ClipboardCheck size={24} />
             <span>Attendance</span>
 
             {(
@@ -4836,8 +4871,7 @@ function CredentialForm({
 }) {
   const [user, setUser] = useState('');
   const [pass, setPass] = useState('');
-  const [showPass, setShowPass] =
-    useState(false);
+  const [showPass, setShowPass] = useState(false);
 
   return (
     <div className="creds-card">
@@ -4964,6 +4998,7 @@ function CredentialForm({
 }
 
 export default App;
+
 // import React, { useState, useEffect, useRef } from 'react';
 // import axios from 'axios';
 // import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
@@ -5463,11 +5498,16 @@ export default App;
 
 //     localStorage.removeItem('iimt_user');
 //     localStorage.removeItem('iimt_token');
+    
+//     // Clear timetable caches on logout to ensure fresh data on next login
+//     SECTIONS.forEach(s => localStorage.removeItem(`iimt_timetable_cache_${s}`));
 
 //     setCache({});
 //   };
 
 //   const applyDateLogic = (data) => {
+//     if (!data || data.length === 0) return;
+    
 //     const validDates = data
 //       .map(d => d.isoDate)
 //       .filter(Boolean);
@@ -5493,83 +5533,85 @@ export default App;
 //     }
 //   };
 
+//   // --- REFACTORED: Local-First Caching Logic ---
 //   const fetchTimetable = async (
 //     sec,
 //     forceBackendSync = false,
 //     isBackgroundRefresh = false
 //   ) => {
-//     if (
-//       !forceBackendSync &&
-//       !isBackgroundRefresh &&
-//       cache[sec]
-//     ) {
-//       setScheduleData(cache[sec].timetable);
-//       setSummaryData(cache[sec].summary);
+//     const localKey = `iimt_timetable_cache_${sec}`;
+    
+//     let hasLocalData = !!cache[sec];
 
-//       if (cache[sec].meta) {
-//         setSyncMeta(cache[sec].meta);
+//     // 1. Instantly load from local storage if memory cache is empty
+//     if (!hasLocalData) {
+//       const stored = localStorage.getItem(localKey);
+//       if (stored) {
+//         try {
+//           const parsed = JSON.parse(stored);
+//           setCache(prev => ({ ...prev, [sec]: parsed }));
+//           setScheduleData(parsed.timetable);
+//           setSummaryData(parsed.summary);
+//           if (parsed.meta) setSyncMeta(parsed.meta);
+          
+//           // Apply date logic to instantly snap to today without loaders
+//           if (!selectedDate) applyDateLogic(parsed.timetable);
+          
+//           hasLocalData = true;
+//         } catch(e) {
+//           localStorage.removeItem(localKey);
+//         }
 //       }
-
-//       applyDateLogic(cache[sec].timetable);
-//       return;
 //     }
 
-//     if (!isBackgroundRefresh) {
+//     // 2. Only show loading screen if we absolutely have no data
+//     const shouldShowLoader = !hasLocalData && !isBackgroundRefresh;
+
+//     if (shouldShowLoader) {
 //       setLoading(true);
 //       setError('');
 //     }
 
 //     try {
 //       const token = localStorage.getItem('iimt_token');
-
 //       const res = await axios.get(
 //         `${API_BASE_URL}/api/timetable/${sec}?force=${forceBackendSync}`,
-//         {
-//           headers: {
-//             Authorization: `Bearer ${token}`
-//           }
-//         }
+//         { headers: { Authorization: `Bearer ${token}` } }
 //       );
+
+//       // HTTP 304 (Not Modified) or empty body means data is unchanged. Skip update.
+//       if (!res.data || !res.data.timetable) return;
 
 //       const data = res.data.timetable;
 //       const summary = res.data.summary;
 //       const meta = res.data.meta;
 
-//       setScheduleData(data);
-//       setSummaryData(summary);
-
-//       if (meta) {
-//         setSyncMeta(meta);
-//       }
-
-//       if (!isBackgroundRefresh) {
+//       // Only re-apply date boundaries if forced or if we didn't have data initially
+//       if (!hasLocalData || forceBackendSync) {
 //         applyDateLogic(data);
 //       }
 
-//       setCache(prevCache => ({
-//         ...prevCache,
-//         [sec]: {
-//           timetable: data,
-//           summary,
-//           meta
-//         }
-//       }));
+//       setScheduleData(data);
+//       setSummaryData(summary);
+//       if (meta) setSyncMeta(meta);
+
+//       const cachePayload = { timetable: data, summary, meta };
+      
+//       // Update memory & local browser storage silently
+//       setCache(prevCache => ({ ...prevCache, [sec]: cachePayload }));
+//       localStorage.setItem(localKey, JSON.stringify(cachePayload));
+
 //     } catch (err) {
-//       if (err.response?.status === 429) {
-//         if (!isBackgroundRefresh) {
-//           setError(
-//             'Server busy: Rate limit exceeded. Try again in a few minutes.'
-//           );
-//         }
-//       } else if (err.response?.status !== 401) {
-//         if (!isBackgroundRefresh) {
-//           setError(
-//             'System Error: Unable to fetch ERP data.'
-//           );
+//       // Ignore background errors if we already rendered the UI from local cache
+//       if (shouldShowLoader) {
+//         if (err.response?.status === 429) {
+//           setError('Server busy: Rate limit exceeded. Try again in a few minutes.');
+//         } else if (err.response?.status !== 401) {
+//           setError('System Error: Unable to fetch ERP data.');
 //         }
 //       }
 //     } finally {
-//       if (!isBackgroundRefresh) {
+//       if (shouldShowLoader) {
 //         setLoading(false);
 //       }
 //     }
@@ -5652,6 +5694,8 @@ export default App;
 //     trackEvent('button_click', 'manual_sync_timetable');
 
 //     setCache({});
+//     SECTIONS.forEach(s => localStorage.removeItem(`iimt_timetable_cache_${s}`));
+    
 //     fetchTimetable(section, true, false);
 //   };
 
