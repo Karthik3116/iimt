@@ -1161,71 +1161,7 @@ function extractTableHtml(responseText) {
     return responseText.substring(start, end);
 }
 
-// function extractAttendance(html, rollNo) {
-//     let tableHtml = extractTableHtml(html);
-//     let $;
-//     let table;
 
-//     if (tableHtml) {
-//         $ = cheerio.load(tableHtml);
-//         table = $('table').first();
-//     } else {
-//         $ = cheerio.load(html);
-//         table = $('#ctl00_Main_AttendanceReport_GridViewAttendanceMerged');
-//     }
-
-//     if (!table || !table.length) return null;
-
-//     const rows = table.find('tr');
-//     if (rows.length < 2) return null;
-
-//     const headerCells = $(rows[0]).find('th');
-//     const classes = [];
-    
-//     for (let i = 2; i < headerCells.length - 2; i++) {
-//         const htmlContent = $(headerCells[i]).html() || '';
-//         const $cell = cheerio.load(htmlContent);$cell('br').replaceWith('\n');
-        
-//         const parts = $cell.text().split('\n').map(s => s.trim()).filter(Boolean);
-        
-//         if (parts.length >= 3) {
-//             classes.push({ class: parts[0], date: parts[1], time: parts[2] });
-//         } else {
-//             const fullText = $cell.text().replace(/\s+/g, ' ').trim();
-//             const match = fullText.match(/(\d+)\s+(\d{2}-\d{2}-\d{2})\s+(\d{2}:\d{2})/);
-//             if (match) {
-//                 classes.push({ class: match[1], date: match[2], time: match[3] });
-//             } else {
-//                 classes.push({ class: fullText, date: '', time: '' });
-//             }
-//         }
-//     }
-
-//     let userRow = null;
-//     for (let i = 1; i < rows.length; i++) {
-//         const cells = $(rows[i]).find('td');
-//         const currentRoll = $(cells[0]).text().replace(/\s+/g, ' ').trim();
-//         if (currentRoll === rollNo.trim()) { 
-//             userRow = cells; 
-//             break; 
-//         }
-//     }
-//     if (!userRow) return null;
-
-//     const attendanceValues = [];
-//     for (let i = 2; i < userRow.length - 2; i++) {
-//         const classInfo = classes[i - 2];
-//         if (!classInfo) break;
-//         const status = $(userRow[i]).text().replace(/\s+/g, ' ').trim();
-//         attendanceValues.push({ ...classInfo, status });
-//     }
-
-//     const attended = parseInt($(userRow[userRow.length - 2]).text().trim(), 10) || 0;
-//     const total = parseInt($(userRow[userRow.length - 1]).text().trim(), 10) || 0;
-//     const percentage = total ? ((attended / total) * 100).toFixed(2) : null;
-
-//     return { classes: attendanceValues, attended, total, percentage };
-// }
 
 
 const NOT_STARTED_RESULT = () => ({
@@ -1376,56 +1312,6 @@ app.post('/api/attendance/fetch', authenticateUser, async (req, res) => {
     }
 });
 
-// async function completeScrape(client, section, username, res, userId, term, subjects, totalSteps) {
-//     try {
-//         setAttendanceProgress(userId, 2, 'Loading your attendance report…', 'in_progress', totalSteps);
-//         const attendanceRes = await client.get(ATTENDANCE_URL, { 'Referer': LOGIN_URL });
-//         const state = parseFullForm(attendanceRes.data);
-        
-//         const PROGRAM = "PGPM 2026-28", TERM_VAL = term;
-//         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName'] !== PROGRAM) {
-//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListProgramName', PROGRAM);
-//         }
-            
-//         if (state['ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo'] !== TERM_VAL) {
-//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListTermNo', TERM_VAL);
-//         }
-
-//         const results = {};
-//         for (let i = 0; i < subjects.length; i++) {
-//             const subject = subjects[i];
-//             setAttendanceProgress(userId, 2 + i, `Fetching ${subject} (${i + 1}/${subjects.length})…`, 'in_progress', totalSteps);
-
-//             await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSubjectName', subject);
-//             const sectionResHtml = await dropdownPostback(client, state, 'ctl00$Main$AttendanceReport$ProgTermSubSec1$DropDownListSection', section);
-            
-//             const attendanceData = extractAttendance(sectionResHtml, username);
-//             if (attendanceData) {
-//                 results[subject] = attendanceData;
-//             }
-//         }
-
-//         const hasAnyRecord = Object.values(results).some(sub => sub.total > 0);
-//         setAttendanceProgress(
-//             userId,
-//             totalSteps,
-//             hasAnyRecord ? 'Done!' : 'Finished, but no matching records were found.',
-//             'done',
-//             totalSteps
-//         );
-//         clearAttendanceProgressSoon(userId);
-
-//         res.json({ success: true, results, section, term });
-//     } catch (error) {
-//         console.error("Scrape Error:", error);
-//         setAttendanceProgress(userId, 0, 'Something went wrong while fetching attendance.', 'error', totalSteps);
-//         clearAttendanceProgressSoon(userId);
-//         res.status(500).json({ error: 'Failed to extract attendance data' });
-//     }
-// }
-
-
-// test
 
 async function completeScrape(client, section, username, res, userId, term, subjects, totalSteps) {
     try {
