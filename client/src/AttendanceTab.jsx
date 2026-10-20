@@ -170,6 +170,7 @@ function AttendanceTab({
   Object.values(
     attendanceData || {}
   ).forEach(sub => {
+    if (sub.notStarted) return;
     overallAttended += sub.attended;
     overallTotal += sub.total;
   });
@@ -426,11 +427,20 @@ function AttendanceTab({
           const isExp =
             expandedSubject === subject;
 
-          const pct =
-            parseFloat(data.percentage);
+          const notStarted =
+            data.notStarted ||
+            (
+              !data.total &&
+              (data.classes || []).length === 0
+            );
 
-          const color =
-            pct >= 80
+          const pct = notStarted
+            ? 0
+            : parseFloat(data.percentage) || 0;
+
+          const color = notStarted
+            ? '#9aa0a6'
+            : pct >= 80
               ? '#4caf50'
               : pct >= 75
                 ? '#faad14'
@@ -461,36 +471,54 @@ function AttendanceTab({
                 </div>
 
                 <div className="subject-stats">
-                  <span
-                    style={{
-                      fontWeight: 'bold',
-                      color: '#444'
-                    }}
-                  >
-                    {data.attended}/
-                    {data.total}
-                  </span>
-
-                  <div className="progress-bar">
-                    <div
-                      className="progress-fill"
+                  {notStarted ? (
+                    <span
                       style={{
-                        width: `${pct}%`,
-                        background: color
+                        color: '#9aa0a6',
+                        fontWeight: 'bold',
+                        fontSize: '0.85rem',
+                        background: 'rgba(154,160,166,0.15)',
+                        padding: '4px 10px',
+                        borderRadius: '999px',
+                        whiteSpace: 'nowrap'
                       }}
-                    />
-                  </div>
+                    >
+                      Not started
+                    </span>
+                  ) : (
+                    <>
+                      <span
+                        style={{
+                          fontWeight: 'bold',
+                          color: '#444'
+                        }}
+                      >
+                        {data.attended}/
+                        {data.total}
+                      </span>
 
-                  <span
-                    style={{
-                      color,
-                      fontWeight: 'bold',
-                      width: '45px',
-                      textAlign: 'right'
-                    }}
-                  >
-                    {data.percentage}%
-                  </span>
+                      <div className="progress-bar">
+                        <div
+                          className="progress-fill"
+                          style={{
+                            width: `${pct}%`,
+                            background: color
+                          }}
+                        />
+                      </div>
+
+                      <span
+                        style={{
+                          color,
+                          fontWeight: 'bold',
+                          width: '45px',
+                          textAlign: 'right'
+                        }}
+                      >
+                        {data.percentage}%
+                      </span>
+                    </>
+                  )}
 
                   {isExp ? (
                     <ChevronUp
@@ -511,7 +539,7 @@ function AttendanceTab({
                   isExp ? 'expanded' : ''
                 }`}
               >
-                {data.classes.map(
+                {(data.classes || []).map(
                   (cls, cIdx) => (
                     <div
                       key={cIdx}
@@ -550,7 +578,7 @@ function AttendanceTab({
                   )
                 )}
 
-                {data.classes.length === 0 && (
+                {(data.classes || []).length === 0 && (
                   <div
                     style={{
                       textAlign: 'center',
@@ -558,7 +586,9 @@ function AttendanceTab({
                       padding: '10px'
                     }}
                   >
-                    No records found.
+                    {notStarted
+                      ? "Classes haven't started yet."
+                      : 'No records found.'}
                   </div>
                 )}
               </div>
