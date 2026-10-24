@@ -64,8 +64,6 @@ const strictLimiter = rateLimit({
 // --- 1. MONGODB CONNECTION & SCHEMAS ---
 const MONGO_URI = process.env.MONGO_URI;
 
-const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 console.log("Trying to connect with the DB...");
 mongoose.connect(MONGO_URI)
@@ -869,7 +867,7 @@ async function sendViaBrevo(recipients, subject, html, text) {
 }
 
 const { Resend } = require('resend');
-const re_send = new Resend(process.env.RESEND_API_KEY);
+const resendClient = new Resend(process.env.RESEND_API_KEY);
 
 async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
     const recipients = Array.isArray(to) ? to : [to];
@@ -878,7 +876,7 @@ async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
     }
 
     try {
-        const data = await re_send.emails.send({
+        const data = await resendClient.emails.send({
             from: process.env.MAIL_FROM || 'IIMT Watcher <onboarding@resend.dev>', // Use your verified domain in production
             to: recipients,
             subject: subject,
@@ -2369,3 +2367,6 @@ app.listen(PORT, () => {
     // Keeps the instance alive
     setInterval(pingServer, PING_INTERVAL_MS);
 });
+
+
+
