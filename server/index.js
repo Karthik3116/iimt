@@ -870,24 +870,50 @@ async function sendViaBrevo(recipients, subject, html, text) {
 const { Resend } = require('resend');
 const resendClient = new Resend(process.env.RESEND_API_KEY);
 
-async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
-    const recipients = Array.isArray(to) ? to : [to];
-    if (recipients.length === 0) {
-        throw new Error('No recipients configured for the MHE watcher.');
-    }
+const { Resend } = require('resend');
+
+// Initialize Resend using your environment variable
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// Replace your existing sendMheMail function with this:
+// Replace the existing sendMheMail function with this updated version
+async function sendMheMail(subject, htmlContent, textContent, recipients) {
+    // If no specific recipients are passed (e.g., for failure alerts), fallback to the default list
+    const targetRecipients = (recipients && recipients.length > 0) 
+        ? recipients 
+        : MHE_WATCH_RECIPIENTS;
+
+    // Brevo expects the 'to' field to be an array of objects: [{ email: "..." }]
+    const toArray = targetRecipients.map(email => ({ email }));
 
     try {
-        const data = await resendClient.emails.send({
-            from: process.env.MAIL_FROM || 'IIMT Watcher <onboarding@resend.dev>', // Use your verified domain in production
-            to: recipients,
-            subject: subject,
-            html: html,
-            text: text,
-        });
-        return data;
-    } catch (err) {
-        console.error('Resend API send failed:', err.message);
-        throw err;
+        const response = await axios.post(
+            'https://api.brevo.com/v3/smtp/email',
+            {
+                sender: { 
+                    name: process.env.MAIL_FROM_NAME || "IIMT Assignment Watcher", 
+                    email: process.env.MAIL_FROM_EMAIL || "copypasteenbl@gmail.com" // Your verified sender
+                },
+                to: toArray,
+                subject: subject,
+                htmlContent: htmlContent,
+                textContent: textContent
+            },
+            {
+                headers: {
+                    'api-key': process.env.BREVO_API_KEY,
+                    'Content-Type': 'application/json',
+                    'accept': 'application/json'
+                }
+            }
+        );
+
+        console.log('[MHE-Watch] Email sent successfully via Brevo! Message ID:', response.data.messageId);
+        return true;
+    } catch (error) {
+        console.error('[MHE-Watch] Failed to send email via Brevo. Error details:');
+        console.error(error.response ? error.response.data : error.message);
+        throw new Error(`Brevo API send failed: ${error.message}`);
     }
 }
 
