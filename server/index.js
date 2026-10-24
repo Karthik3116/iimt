@@ -132,6 +132,17 @@ const mheSnapshotSchema = new mongoose.Schema({
 });
 const MheSnapshot = mongoose.model('MheSnapshot', mheSnapshotSchema);
 
+// --- NEW: MHE WATCHER HISTORY (every detected state change is kept for 180 days) ---
+const mheHistorySchema = new mongoose.Schema({
+    key: { type: String, required: true, index: true },
+    hash: String,
+    data: { type: mongoose.Schema.Types.Mixed, default: [] },
+    diff: { type: mongoose.Schema.Types.Mixed, default: null },
+    emailSent: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now, expires: '180d' }
+});
+const MheStateHistory = mongoose.model('MheStateHistory', mheHistorySchema);
+
 // --- ENCRYPTION LOGIC FOR CREDENTIALS ---
 const ALGORITHM = 'aes-256-cbc';
 
@@ -747,7 +758,7 @@ const MHE_WATCH_ENABLED = process.env.MHE_WATCH_ENABLED !== 'false';
 const MHE_WATCH_USERNAME = process.env.MHE_WATCH_USERNAME || '';
 const MHE_WATCH_PASSWORD = process.env.MHE_WATCH_PASSWORD || '';
 const MHE_WATCH_SECTION_ID = process.env.MHE_WATCH_SECTION_ID || '';
-const MHE_WATCH_RECIPIENTS = (process.env.MHE_WATCH_RECIPIENTS || 'response123@gmail.com,newsxxx@gmail.com')
+const MHE_WATCH_RECIPIENTS = (process.env.MHE_WATCH_RECIPIENTS || 'kartheek.p26030@iimtrichy.ac.in,sasank.p26036@iimtrichy.ac.in')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
@@ -849,55 +860,125 @@ function mheComputeDiff(oldList, newList) {
     return { added, removed, statusChanged, dueChanged };
 }
 
+// ------------------------------------------------------------
+// EMAIL TEMPLATE HELPERS (inline styles only, so Gmail renders them correctly)
+// ------------------------------------------------------------
+function mheStatusColors(status) {
+    const s = String(status || '').toUpperCase();
+    if (['SUBMITTED', 'COMPLETED', 'GRADED', 'DONE'].includes(s)) return { bg: '#dcfce7', fg: '#166534' };   // green
+    if (['IN_PROGRESS', 'STARTED', 'OPEN'].includes(s)) return { bg: '#dbeafe', fg: '#1e40af' };             // blue
+    if (['NOT_STARTED', 'PENDING', 'NOT_SUBMITTED', 'UNKNOWN'].includes(s)) return { bg: '#fef3c7', fg: '#92400e' }; // amber
+    return { bg: '#e5e7eb', fg: '#374151' };                                                                  // grey
+}
+
+function mheBadge(status) {
+    const c = mheStatusColors(status);
+    const label = String(status || 'UNKNOWN').replace(/_/g, ' ');
+    return `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${c.bg};color:${c.fg};font-size:12px;font-weight:700;">${escapeHtml(label)}</span>`;
+}
+
+function mheCard(accent, mainHtml, subHtml) {
+    return `<div style="border-left:4px solid ${accent};background:#f9fafb;border-radius:6px;padding:10px 14px;margin-bottom:8px;">` +
+        `<div style="font-size:14px;font-weight:600;color:#111827;">${mainHtml}</div>` +
+        `<div style="font-size:12px;color:#6b7280;margin-top:4px;">${subHtml}</div>` +
+        `</div>`;
+}
+
+function mheSection(title, accent, cardsHtml) {
+    return `<tr><td style="padding:20px 28px 0 28px;">` +
+        `<div style="font-size:14px;font-weight:700;color:${accent};margin-bottom:10px;">${title}</div>` +
+        `${cardsHtml}</td></tr>`;
+}
+
+function mheChips(items) {
+    const cells = items.filter(i => i.count > 0).map(i =>
+        `<td style="padding-right:8px;"><div style="background:${i.bg};color:${i.fg};border-radius:8px;padding:8px 16px;text-align:center;">` +
+        `<div style="font-size:20px;font-weight:700;">${i.count}</div>` +
+        `<div style="font-size:11px;font-weight:600;">${i.label}</div></div></td>`
+    ).join('');
+    if (!cells) return '';
+    return `<tr><td style="padding:22px 28px 0 28px;"><table role="presentation" cellpadding="0" cellspacing="0"><tr>${cells}</tr></table></td></tr>`;
+}
+
+function mheListTable(list) {
+    const rows = (list || []).map((i, idx) =>
+        `<tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f9fafb'};">` +
+        `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#111827;">${escapeHtml(i.name)}</td>` +
+        `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#4b5563;white-space:nowrap;">${escapeHtml(i.dueDate)}</td>` +
+        `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${mheBadge(i.status)}</td>` +
+        `</tr>`
+    ).join('');
+
+    const body = rows || `<tr><td colspan="3" style="padding:14px;font-size:13px;color:#6b7280;text-align:center;">No assignments</td></tr>`;
+
+    return `<tr><td style="padding:24px 28px 8px 28px;">` +
+        `<div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:10px;">📋 All assignments (${(list || []).length})</div>` +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;border-collapse:separate;overflow:hidden;">` +
+        `<tr style="background:#eef2ff;">` +
+        `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;">ASSIGNMENT</td>` +
+        `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;">DUE</td>` +
+        `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;text-align:right;">STATUS</td></tr>` +
+        `${body}</table></td></tr>`;
+}
+
+function mheEmailShell({ headerTitle, headerSub, headerColor, bodyRows }) {
+    return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f3f4f6;">` +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 12px;"><tr><td align="center">` +
+        `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">` +
+        `<tr><td bgcolor="${headerColor}" style="background:${headerColor};padding:26px 28px;">` +
+        `<div style="font-size:11px;color:#c7d2fe;letter-spacing:1.5px;font-weight:700;">MCGRAW HILL CONNECT</div>` +
+        `<div style="font-size:22px;font-weight:700;color:#ffffff;margin-top:6px;">${headerTitle}</div>` +
+        `<div style="font-size:12px;color:#e0e7ff;margin-top:6px;">${headerSub}</div>` +
+        `</td></tr>` +
+        `${bodyRows}` +
+        `<tr><td style="padding:22px 28px;text-align:center;font-size:11px;color:#9ca3af;">Sent automatically by IIMT Assignment Watcher · checks every hour</td></tr>` +
+        `</table></td></tr></table></body></html>`;
+}
+
 function mheBuildChangeEmail(diff, newList) {
     const { added, removed, statusChanged, dueChanged } = diff;
     const stamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-    const parts = [];
+    let body = mheChips([
+        { label: 'NEW', count: added.length, bg: '#dcfce7', fg: '#166534' },
+        { label: 'STATUS', count: statusChanged.length, bg: '#dbeafe', fg: '#1e40af' },
+        { label: 'DUE DATE', count: dueChanged.length, bg: '#fef3c7', fg: '#92400e' },
+        { label: 'REMOVED', count: removed.length, bg: '#fee2e2', fg: '#991b1b' }
+    ]);
+
     const textParts = [];
 
     if (added.length) {
-        parts.push(`<h3>🆕 New assignments (${added.length})</h3><ul>${added.map(a =>
-            `<li><b>${escapeHtml(a.name)}</b> — due ${escapeHtml(a.dueDate)} — ${escapeHtml(a.status)}</li>`).join('')}</ul>`);
+        body += mheSection('🆕 New assignments', '#16a34a', added.map(a =>
+            mheCard('#16a34a', escapeHtml(a.name), `Due ${escapeHtml(a.dueDate)} &nbsp;·&nbsp; ${mheBadge(a.status)}`)).join(''));
         textParts.push(`NEW ASSIGNMENTS (${added.length})\n` + added.map(a => `- ${a.name} | due ${a.dueDate} | ${a.status}`).join('\n'));
     }
     if (statusChanged.length) {
-        parts.push(`<h3>🔄 Status changes (${statusChanged.length})</h3><ul>${statusChanged.map(s =>
-            `<li><b>${escapeHtml(s.name)}</b>: ${escapeHtml(s.from)} → <b>${escapeHtml(s.to)}</b> (due ${escapeHtml(s.dueDate)})</li>`).join('')}</ul>`);
+        body += mheSection('🔄 Status changes', '#2563eb', statusChanged.map(s =>
+            mheCard('#2563eb', escapeHtml(s.name), `${mheBadge(s.from)} &nbsp;→&nbsp; ${mheBadge(s.to)} &nbsp;·&nbsp; Due ${escapeHtml(s.dueDate)}`)).join(''));
         textParts.push(`STATUS CHANGES (${statusChanged.length})\n` + statusChanged.map(s => `- ${s.name}: ${s.from} -> ${s.to} (due ${s.dueDate})`).join('\n'));
     }
     if (dueChanged.length) {
-        parts.push(`<h3>📅 Due date changes (${dueChanged.length})</h3><ul>${dueChanged.map(d =>
-            `<li><b>${escapeHtml(d.name)}</b>: ${escapeHtml(d.from)} → <b>${escapeHtml(d.to)}</b></li>`).join('')}</ul>`);
+        body += mheSection('📅 Due date changes', '#d97706', dueChanged.map(d =>
+            mheCard('#d97706', escapeHtml(d.name), `<s style="color:#9ca3af;">${escapeHtml(d.from)}</s> &nbsp;→&nbsp; <b style="color:#92400e;">${escapeHtml(d.to)}</b>`)).join(''));
         textParts.push(`DUE DATE CHANGES (${dueChanged.length})\n` + dueChanged.map(d => `- ${d.name}: ${d.from} -> ${d.to}`).join('\n'));
     }
     if (removed.length) {
-        parts.push(`<h3>🗑️ Removed assignments (${removed.length})</h3><ul>${removed.map(r =>
-            `<li><b>${escapeHtml(r.name)}</b> — was due ${escapeHtml(r.dueDate)} — ${escapeHtml(r.status)}</li>`).join('')}</ul>`);
+        body += mheSection('🗑️ Removed assignments', '#dc2626', removed.map(r =>
+            mheCard('#dc2626', escapeHtml(r.name), `Was due ${escapeHtml(r.dueDate)} &nbsp;·&nbsp; ${mheBadge(r.status)}`)).join(''));
         textParts.push(`REMOVED ASSIGNMENTS (${removed.length})\n` + removed.map(r => `- ${r.name} | was due ${r.dueDate} | ${r.status}`).join('\n'));
     }
 
-    const rows = (newList || []).map(i =>
-        `<tr><td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(i.name)}</td>` +
-        `<td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(i.dueDate)}</td>` +
-        `<td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(i.status)}</td></tr>`
-    ).join('');
+    body += mheListTable(newList);
 
-    const html = `
-        <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:720px;">
-            <h2 style="margin-bottom:4px;">McGraw Hill assignments updated</h2>
-            <p style="color:#666;margin-top:0;">Detected at ${escapeHtml(stamp)} (IST)</p>
-            ${parts.join('')}
-            <h3>Current list (${(newList || []).length})</h3>
-            <table style="border-collapse:collapse;font-size:14px;">
-                <thead><tr style="background:#f3f3f3;">
-                    <th style="padding:6px 10px;border:1px solid #ddd;text-align:left;">Assignment</th>
-                    <th style="padding:6px 10px;border:1px solid #ddd;text-align:left;">Due</th>
-                    <th style="padding:6px 10px;border:1px solid #ddd;text-align:left;">Status</th>
-                </tr></thead>
-                <tbody>${rows || '<tr><td colspan="3" style="padding:6px 10px;">No assignments</td></tr>'}</tbody>
-            </table>
-        </div>`;
+    const total = added.length + removed.length + statusChanged.length + dueChanged.length;
+
+    const html = mheEmailShell({
+        headerTitle: `${total} update${total === 1 ? '' : 's'} detected`,
+        headerSub: `${escapeHtml(stamp)} (IST)`,
+        headerColor: '#4f46e5',
+        bodyRows: body
+    });
 
     const text =
         `McGraw Hill assignments updated (${stamp} IST)\n\n` +
@@ -905,36 +986,55 @@ function mheBuildChangeEmail(diff, newList) {
         `\n\nCURRENT LIST (${(newList || []).length})\n` +
         (newList || []).map(i => `- ${i.name} | due ${i.dueDate} | ${i.status}`).join('\n');
 
-    const total = added.length + removed.length + statusChanged.length + dueChanged.length;
-    return { subject: `[MHE] ${total} assignment change${total === 1 ? '' : 's'} detected`, html, text };
+    const bits = [];
+    if (added.length) bits.push(`${added.length} new`);
+    if (statusChanged.length) bits.push(`${statusChanged.length} status`);
+    if (dueChanged.length) bits.push(`${dueChanged.length} due date`);
+    if (removed.length) bits.push(`${removed.length} removed`);
+
+    return { subject: `📚 MHE update: ${bits.join(', ')}`, html, text };
 }
 
 function mheBuildBaselineEmail(newList) {
     const stamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    const rows = (newList || []).map(i =>
-        `<tr><td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(i.name)}</td>` +
-        `<td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(i.dueDate)}</td>` +
-        `<td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(i.status)}</td></tr>`
-    ).join('');
 
-    const html = `
-        <div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:720px;">
-            <h2>McGraw Hill watcher started</h2>
-            <p style="color:#666;">Baseline captured at ${escapeHtml(stamp)} (IST). You'll get an email whenever this list changes.</p>
-            <table style="border-collapse:collapse;font-size:14px;">
-                <thead><tr style="background:#f3f3f3;">
-                    <th style="padding:6px 10px;border:1px solid #ddd;text-align:left;">Assignment</th>
-                    <th style="padding:6px 10px;border:1px solid #ddd;text-align:left;">Due</th>
-                    <th style="padding:6px 10px;border:1px solid #ddd;text-align:left;">Status</th>
-                </tr></thead>
-                <tbody>${rows || '<tr><td colspan="3" style="padding:6px 10px;">No assignments</td></tr>'}</tbody>
-            </table>
-        </div>`;
+    let body = `<tr><td style="padding:22px 28px 0 28px;font-size:14px;color:#374151;line-height:1.5;">` +
+        `The watcher is running. You will get an email whenever an assignment is added, removed, or its status or due date changes.` +
+        `</td></tr>`;
+    body += mheListTable(newList);
+
+    const html = mheEmailShell({
+        headerTitle: 'Watcher started ✅',
+        headerSub: `Baseline captured ${escapeHtml(stamp)} (IST)`,
+        headerColor: '#059669',
+        bodyRows: body
+    });
+
     const text =
         `McGraw Hill watcher started (${stamp} IST)\n\n` +
         (newList || []).map(i => `- ${i.name} | due ${i.dueDate} | ${i.status}`).join('\n');
 
-    return { subject: `[MHE] Watcher started - ${(newList || []).length} assignments tracked`, html, text };
+    return { subject: `✅ MHE watcher started - ${(newList || []).length} assignments tracked`, html, text };
+}
+
+function mheBuildFailureEmail(failures, errMessage) {
+    const stamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const body =
+        `<tr><td style="padding:22px 28px 8px 28px;">` +
+        mheCard('#dc2626', `Failed ${failures} times in a row`, `Last error: ${escapeHtml(errMessage)}`) +
+        `<div style="font-size:13px;color:#4b5563;line-height:1.5;margin-top:8px;">Check the McGraw Hill password / section ID, or whether the server IP is being blocked.</div>` +
+        `</td></tr>`;
+
+    return {
+        subject: '⚠️ MHE watcher is failing',
+        html: mheEmailShell({
+            headerTitle: 'Watcher needs attention ⚠️',
+            headerSub: `${escapeHtml(stamp)} (IST)`,
+            headerColor: '#dc2626',
+            bodyRows: body
+        }),
+        text: `The McGraw Hill watcher failed ${failures} times in a row.\nLast error: ${errMessage}`
+    };
 }
 
 // Returns 'busy' | 'skipped' | 'ok'
@@ -979,7 +1079,9 @@ async function runMheWatcherOnce() {
                 { key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, updatedAt: new Date() },
                 { upsert: true, returnDocument: 'after' }
             );
-            console.log(`[MHE-Watch] Baseline saved (${list.length} assignments). No email needed.`);
+            await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff: null, emailSent: MHE_WATCH_NOTIFY_FIRST_RUN })
+                .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
+            console.log(`[MHE-Watch] Baseline saved (${list.length} assignments).`);
             return 'ok';
         }
 
@@ -1001,6 +1103,8 @@ async function runMheWatcherOnce() {
             { hash: newHash, data: list, updatedAt: new Date() },
             { upsert: true, returnDocument: 'after' }
         );
+        await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff, emailSent: true })
+            .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
         return 'ok';
     } catch (error) {
         mheWatchConsecutiveFailures++;
@@ -1009,15 +1113,8 @@ async function runMheWatcherOnce() {
         // One-time alert if the watcher keeps failing (bad password, captcha, blocked IP...)
         if (mheWatchConsecutiveFailures >= MHE_WATCH_FAILURE_ALERT_AFTER && !mheWatchFailureAlertSent) {
             try {
-                await sendMheMail(
-                    '[MHE] Assignment watcher is failing',
-                    `<div style="font-family:Arial,Helvetica,sans-serif;">
-                        <h3>The McGraw Hill watcher failed ${mheWatchConsecutiveFailures} times in a row.</h3>
-                        <p><b>Last error:</b> ${escapeHtml(error.message)}</p>
-                        <p>Check the McGraw Hill password / section ID or whether the server IP is being blocked.</p>
-                    </div>`,
-                    `The McGraw Hill watcher failed ${mheWatchConsecutiveFailures} times in a row.\nLast error: ${error.message}`
-                );
+                const failMail = mheBuildFailureEmail(mheWatchConsecutiveFailures, error.message);
+                await sendMheMail(failMail.subject, failMail.html, failMail.text);
                 mheWatchFailureAlertSent = true;
             } catch (mailErr) {
                 console.error('[MHE-Watch] Could not send failure alert:', mailErr.message);
