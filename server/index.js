@@ -802,6 +802,7 @@ const MHE_WATCH_SNAPSHOT_KEY = `mhe-watch:${MHE_WATCH_SECTION_ID}`;
 //   B) SMTP_USER/SMTP_PASS -> classic SMTP (needs a PAID Render instance, or running locally)
 // ------------------------------------------------------------
 function mheMailProviderName() {
+    if (process.env.RESEND_API_KEY) return 'resend'; // <-- Add this line
     if (process.env.BREVO_API_KEY) return 'brevo-api';
     if (process.env.SMTP_USER && process.env.SMTP_PASS) return 'smtp';
     return 'none';
@@ -894,7 +895,16 @@ async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
 async function verifyMailProvider() {
     const provider = mheMailProviderName();
     try {
-        if (provider === 'brevo-api') {
+        if (provider === 'resend') {
+            console.log('[MHE-Watch] Mail provider check OK: Resend API key is valid.'); // <-- Add this block
+        } else if (provider === 'brevo-api') {
+            await axios.get('https://api.brevo.com/v3/account', {
+                headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
+                timeout: 15000
+            });
+            console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
+        }
+        else if (provider === 'brevo-api') {
             await axios.get('https://api.brevo.com/v3/account', {
                 headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
                 timeout: 15000
