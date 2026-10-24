@@ -64,6 +64,9 @@ const strictLimiter = rateLimit({
 // --- 1. MONGODB CONNECTION & SCHEMAS ---
 const MONGO_URI = process.env.MONGO_URI;
 
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 console.log("Trying to connect with the DB...");
 mongoose.connect(MONGO_URI)
     .then(() => console.log('Connected to MongoDB'))
@@ -865,31 +868,26 @@ async function sendViaBrevo(recipients, subject, html, text) {
     }
 }
 
+const { Resend } = require('resend');
+const re_send = new Resend(process.env.RESEND_API_KEY);
+
 async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
     const recipients = Array.isArray(to) ? to : [to];
     if (recipients.length === 0) {
         throw new Error('No recipients configured for the MHE watcher.');
     }
 
-    if (process.env.BREVO_API_KEY) {
-        await sendViaBrevo(recipients, subject, html, text);
-        return;
-    }
-
-    const transporter = getMailTransporter();
-    if (!transporter) {
-        throw new Error('No mail provider configured. Set BREVO_API_KEY (+ MAIL_FROM_EMAIL) or SMTP_USER + SMTP_PASS.');
-    }
     try {
-        await transporter.sendMail({
-            from: process.env.MAIL_FROM || `"IIMT Assignment Watcher" <${process.env.SMTP_USER}>`,
-            to: recipients.join(', '),
-            subject,
-            text,
-            html
+        const data = await re_send.emails.send({
+            from: process.env.MAIL_FROM || 'IIMT Watcher <onboarding@resend.dev>', // Use your verified domain in production
+            to: recipients,
+            subject: subject,
+            html: html,
+            text: text,
         });
+        return data;
     } catch (err) {
-        err.message = `${err.message}${mheMailErrorHint(err)}`;
+        console.error('Resend API send failed:', err.message);
         throw err;
     }
 }

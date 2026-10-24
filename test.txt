@@ -7,3 +7,7 @@
 [MHE] mode=fill fieldsMatchInput: email=true, password=true
 [MHE] fill mode failed (BAD_CREDS), retrying with typed input...
 [MHE] mode=type fieldsMatchInput: email=true, password=true
+
+
+
+curl -X POST https://iimt-7iy6.onrender.com/api/admin/mhe-watch/test-mail -H "Content-Type: application/json" -d '{"password":"sheissweety"}'

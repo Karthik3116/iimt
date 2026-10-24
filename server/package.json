@@ -26,6 +26,7 @@
     "mongoose": "^9.7.3",
     "nodemailer": "^10.2.1",
     "playwright": "^1.64.0",
+    "resend": "^6.34.1",
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {
