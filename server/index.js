@@ -802,9 +802,9 @@ const MHE_WATCH_SNAPSHOT_KEY = `mhe-watch:${MHE_WATCH_SECTION_ID}`;
 //   B) SMTP_USER/SMTP_PASS -> classic SMTP (needs a PAID Render instance, or running locally)
 // ------------------------------------------------------------
 function mheMailProviderName() {
-    if (process.env.RESEND_API_KEY) return 'resend'; // <-- Add this line
+    
     if (process.env.BREVO_API_KEY) return 'brevo-api';
-    if (process.env.SMTP_USER && process.env.SMTP_PASS) return 'smtp';
+    
     return 'none';
 }
 
