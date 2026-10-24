@@ -140,6 +140,7 @@ const mheHistorySchema = new mongoose.Schema({
     data: { type: mongoose.Schema.Types.Mixed, default: [] },
     diff: { type: mongoose.Schema.Types.Mixed, default: null },
     emailSent: { type: Boolean, default: false },
+    kind: { type: String, default: 'change' },   // 'baseline' | 'welcome' | 'change'
     createdAt: { type: Date, default: Date.now, expires: '180d' }
 });
 const MheStateHistory = mongoose.model('MheStateHistory', mheHistorySchema);
@@ -745,14 +746,18 @@ app.post('/api/assignments/fetch', authenticateUser, async (req, res) => {
 //   MHE_WATCH_USERNAME     e.g. kartheek.p26030@iimtrichy.ac.in
 //   MHE_WATCH_PASSWORD     your McGraw Hill password
 //   MHE_WATCH_SECTION_ID   e.g. 157468169
-//   SMTP_USER              sender Gmail address
-//   SMTP_PASS              Gmail *App Password* (not your normal password)
+//   MAIL DELIVERY - configure ONE of these:
+//     A) BREVO_API_KEY + MAIL_FROM_EMAIL   sends over HTTPS, works on Render FREE
+//        (MAIL_FROM_EMAIL must be a sender you verified inside Brevo)
+//     B) SMTP_USER + SMTP_PASS             Gmail SMTP with an *App Password*.
+//        Render FREE web services BLOCK SMTP ports (25/465/587), so B needs a paid instance.
 // Optional:
 //   MHE_WATCH_RECIPIENTS   comma separated (default: kartheek.p26030@iimtrichy.ac.in,sasank.p26036@iimtrichy.ac.in)
 //   MHE_WATCH_ENABLED      set to "false" to switch the watcher off
 //   MHE_WATCH_NOTIFY_FIRST_RUN  set to "false" to NOT send the one-time welcome / watch-list email
 //   SMTP_HOST / SMTP_PORT  (default smtp.gmail.com / 465)
-//   MAIL_FROM              custom "From" header
+//   MAIL_FROM              custom "From" header (SMTP mode)
+//   MAIL_FROM_NAME         display name used in Brevo mode (default: IIMT Assignment Watcher)
 // ============================================================
 
 const MHE_WATCH_ENABLED = process.env.MHE_WATCH_ENABLED !== 'false';
@@ -771,11 +776,35 @@ const MHE_WATCH_INTERVAL_MS = 60 * 60 * 1000;       // 1 hour between runs
 const MHE_WATCH_BUSY_RETRY_MS = 5 * 60 * 1000;      // if a user scrape is running, retry in 5 min
 const MHE_WATCH_INITIAL_DELAY_MS = 90 * 1000;       // let the server + Excel cache settle first
 const MHE_WATCH_FAILURE_ALERT_AFTER = 3;            // email one alert after N consecutive failures
+const MHE_WATCH_RETRY_AFTER_FAIL_MS = 10 * 60 * 1000; // after a failed run, try again in 10 min (not a full hour)
 
 let mheWatchConsecutiveFailures = 0;
 let mheWatchFailureAlertSent = false;
 
+// In-memory status, readable through POST /api/admin/mhe-watch/status
+const mheWatchStatus = {
+    running: false,
+    runs: 0,
+    lastRunAt: null,
+    lastOutcome: 'never',
+    lastTrigger: null,
+    lastDurationMs: null,
+    lastError: null,
+    nextRunAt: null
+};
+
 const MHE_WATCH_SNAPSHOT_KEY = `mhe-watch:${MHE_WATCH_SECTION_ID}`;
+
+// ------------------------------------------------------------
+// MAIL DELIVERY
+//   A) BREVO_API_KEY set  -> sends over HTTPS (works on Render FREE, which blocks SMTP ports)
+//   B) SMTP_USER/SMTP_PASS -> classic SMTP (needs a PAID Render instance, or running locally)
+// ------------------------------------------------------------
+function mheMailProviderName() {
+    if (process.env.BREVO_API_KEY) return 'brevo-api';
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) return 'smtp';
+    return 'none';
+}
 
 let mailTransporter = null;
 function getMailTransporter() {
@@ -790,27 +819,101 @@ function getMailTransporter() {
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
-        }
+        },
+        // Fail fast instead of hanging ~2 minutes when the port is blocked
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 30000
     });
     return mailTransporter;
 }
 
-async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
-    const transporter = getMailTransporter();
-    if (!transporter) {
-        throw new Error('SMTP_USER / SMTP_PASS are not configured, cannot send email.');
+function mheMailErrorHint(err) {
+    const code = err && err.code;
+    if (['ETIMEDOUT', 'ECONNECTION', 'ESOCKET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'].includes(code)) {
+        return ' (Outbound SMTP looks blocked. Render FREE web services block SMTP ports 25/465/587. Set BREVO_API_KEY to send over HTTPS, or upgrade to a paid instance.)';
     }
+    if (code === 'EAUTH') {
+        return ' (Gmail rejected the login. SMTP_PASS must be a 16-character Gmail App Password and 2-step verification must be on.)';
+    }
+    return '';
+}
+
+async function sendViaBrevo(recipients, subject, html, text) {
+    const fromEmail = process.env.MAIL_FROM_EMAIL || process.env.SMTP_USER;
+    if (!fromEmail) {
+        throw new Error('MAIL_FROM_EMAIL is not set (use an address you verified as a sender in Brevo).');
+    }
+    try {
+        await axios.post('https://api.brevo.com/v3/smtp/email', {
+            sender: { name: process.env.MAIL_FROM_NAME || 'IIMT Assignment Watcher', email: fromEmail },
+            to: recipients.map(email => ({ email })),
+            subject,
+            htmlContent: html,
+            textContent: text
+        }, {
+            headers: {
+                'api-key': process.env.BREVO_API_KEY,
+                'content-type': 'application/json',
+                accept: 'application/json'
+            },
+            timeout: 20000
+        });
+    } catch (err) {
+        const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
+        throw new Error(`Brevo API send failed: ${detail}`);
+    }
+}
+
+async function sendMheMail(subject, html, text, to = MHE_WATCH_RECIPIENTS) {
     const recipients = Array.isArray(to) ? to : [to];
     if (recipients.length === 0) {
         throw new Error('No recipients configured for the MHE watcher.');
     }
-    await transporter.sendMail({
-        from: process.env.MAIL_FROM || `"IIMT Assignment Watcher" <${process.env.SMTP_USER}>`,
-        to: recipients.join(', '),
-        subject,
-        text,
-        html
-    });
+
+    if (process.env.BREVO_API_KEY) {
+        await sendViaBrevo(recipients, subject, html, text);
+        return;
+    }
+
+    const transporter = getMailTransporter();
+    if (!transporter) {
+        throw new Error('No mail provider configured. Set BREVO_API_KEY (+ MAIL_FROM_EMAIL) or SMTP_USER + SMTP_PASS.');
+    }
+    try {
+        await transporter.sendMail({
+            from: process.env.MAIL_FROM || `"IIMT Assignment Watcher" <${process.env.SMTP_USER}>`,
+            to: recipients.join(', '),
+            subject,
+            text,
+            html
+        });
+    } catch (err) {
+        err.message = `${err.message}${mheMailErrorHint(err)}`;
+        throw err;
+    }
+}
+
+// Logged once at startup so problems are visible immediately (not 90 seconds + one scrape later)
+async function verifyMailProvider() {
+    const provider = mheMailProviderName();
+    try {
+        if (provider === 'brevo-api') {
+            await axios.get('https://api.brevo.com/v3/account', {
+                headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
+                timeout: 15000
+            });
+            console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
+        } else if (provider === 'smtp') {
+            await getMailTransporter().verify();
+            console.log('[MHE-Watch] Mail provider check OK: SMTP login works.');
+        } else {
+            console.error('[MHE-Watch] Mail provider check FAILED: nothing configured. Set BREVO_API_KEY (+ MAIL_FROM_EMAIL) or SMTP_USER + SMTP_PASS.');
+        }
+    } catch (err) {
+        const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
+        console.error(`[MHE-Watch] Mail provider check FAILED (${provider}): ${detail}${mheMailErrorHint(err)}`);
+    }
 }
 
 const escapeHtml = (s) => String(s === undefined || s === null ? '' : s)
@@ -1080,8 +1183,8 @@ function mheBuildFailureEmail(failures, errMessage) {
     };
 }
 
-// Returns 'busy' | 'skipped' | 'ok'
-async function runMheWatcherOnce() {
+// Returns 'busy' | 'skipped' | 'failed' | 'ok'
+async function runMheWatcherOnce(opts = {}) {
     if (!MHE_WATCH_USERNAME || !MHE_WATCH_PASSWORD || !MHE_WATCH_SECTION_ID) {
         console.log('[MHE-Watch] MHE_WATCH_USERNAME / MHE_WATCH_PASSWORD / MHE_WATCH_SECTION_ID not set. Watcher idle.');
         return 'skipped';
@@ -1093,68 +1196,76 @@ async function runMheWatcherOnce() {
         return 'busy';
     }
 
+    const markSuccess = () => {
+        mheWatchConsecutiveFailures = 0;
+        mheWatchFailureAlertSent = false;
+        mheWatchStatus.lastError = null;
+    };
+
     mheScrapeBusy = true;
     try {
-        console.log('[MHE-Watch] Fetching assignments...');
+        console.log('[MHE-Watch] Run started - fetching assignments...');
         const list = await scrapeMheAssignments({
             username: MHE_WATCH_USERNAME,
             password: MHE_WATCH_PASSWORD,
             sectionId: String(MHE_WATCH_SECTION_ID).trim(),
             userEmail: `watcher:${MHE_WATCH_USERNAME}`
         });
-
-        // Scrape worked -> reset failure tracking
-        mheWatchConsecutiveFailures = 0;
-        mheWatchFailureAlertSent = false;
+        console.log(`[MHE-Watch] Scrape OK (${list.length} assignments).`);
 
         const newHash = mheHashList(list);
         const previous = await MheSnapshot.findOne({ key: MHE_WATCH_SNAPSHOT_KEY });
 
         // ---- Who still needs the "you've been added to the watch list" email? ----
         // Works for the very first run AND for any recipient added to MHE_WATCH_RECIPIENTS later.
-        const alreadyNotified = new Set(
-            ((previous && previous.notifiedRecipients) || []).map(r => String(r).toLowerCase())
-        );
+        const alreadyNotified = opts.resendWelcome
+            ? new Set()
+            : new Set(((previous && previous.notifiedRecipients) || []).map(r => String(r).toLowerCase()));
         const newRecipients = MHE_WATCH_WELCOME_ENABLED
             ? MHE_WATCH_RECIPIENTS.filter(r => !alreadyNotified.has(r.toLowerCase()))
             : [];
         const notifiedNow = Array.from(new Set([...alreadyNotified, ...newRecipients.map(r => r.toLowerCase())]));
 
-        // 1) Send the welcome mail (with the current status) FIRST. If it fails we throw,
-        //    nothing is marked as notified, and the next run retries.
-        if (newRecipients.length) {
-            const welcome = mheBuildWelcomeEmail(list, newRecipients);
-            await sendMheMail(welcome.subject, welcome.html, welcome.text, newRecipients);
-            console.log(`[MHE-Watch] Welcome email sent to ${newRecipients.join(', ')}`);
-        }
-
-        // 2) First ever run: store baseline (+ who has been notified)
+        // 1) Save the baseline IMMEDIATELY (never depends on email working)
         if (!previous) {
             await MheSnapshot.findOneAndUpdate(
                 { key: MHE_WATCH_SNAPSHOT_KEY },
-                { key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, notifiedRecipients: notifiedNow, updatedAt: new Date() },
+                { key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, notifiedRecipients: [], updatedAt: new Date() },
                 { upsert: true, returnDocument: 'after' }
             );
-            await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff: null, emailSent: newRecipients.length > 0 })
+            await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff: null, emailSent: false, kind: 'baseline' })
                 .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
-            console.log(`[MHE-Watch] Baseline saved (${list.length} assignments).`);
+            console.log(`[MHE-Watch] Baseline saved to MongoDB (${list.length} assignments).`);
+        } else {
+            await MheSnapshot.updateOne({ key: MHE_WATCH_SNAPSHOT_KEY }, { updatedAt: new Date() });
+        }
+
+        // 2) Welcome mail (with the current status). If it fails we remember that and retry on the next run.
+        let mailError = null;
+        if (newRecipients.length) {
+            try {
+                const welcome = mheBuildWelcomeEmail(list, newRecipients);
+                await sendMheMail(welcome.subject, welcome.html, welcome.text, newRecipients);
+                await MheSnapshot.updateOne({ key: MHE_WATCH_SNAPSHOT_KEY }, { notifiedRecipients: notifiedNow });
+                await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff: null, emailSent: true, kind: 'welcome' })
+                    .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
+                console.log(`[MHE-Watch] Welcome email sent to ${newRecipients.join(', ')}`);
+            } catch (err) {
+                mailError = err;
+                console.error(`[MHE-Watch] Welcome email FAILED: ${err.message}`);
+            }
+        }
+
+        // First run, or nothing changed -> done
+        if (!previous || previous.hash === newHash) {
+            if (previous) console.log(`[MHE-Watch] No change (${list.length} assignments).`);
+            if (mailError) throw mailError;
+            markSuccess();
             return 'ok';
         }
 
-        // 3) Existing snapshot: remember newly welcomed recipients
-        await MheSnapshot.updateOne(
-            { key: MHE_WATCH_SNAPSHOT_KEY },
-            { updatedAt: new Date(), ...(newRecipients.length ? { notifiedRecipients: notifiedNow } : {}) }
-        );
-
-        // No change
-        if (previous.hash === newHash) {
-            console.log(`[MHE-Watch] No change (${list.length} assignments).`);
-            return 'ok';
-        }
-
-        // Changed -> build diff, send mail FIRST, only then save the new snapshot.
-        // Freshly welcomed recipients already received the up-to-date list, so they are skipped here.
+        // 3) Changed -> build diff, send mail FIRST, only then save the new snapshot (so a failed mail is retried).
+        //    Freshly welcomed recipients already received the up-to-date list, so they are skipped here.
         const diff = mheComputeDiff(previous.data, list);
         const changeRecipients = MHE_WATCH_RECIPIENTS.filter(r => !newRecipients.includes(r));
         if (changeRecipients.length) {
@@ -1168,11 +1279,15 @@ async function runMheWatcherOnce() {
             { hash: newHash, data: list, updatedAt: new Date() },
             { upsert: true, returnDocument: 'after' }
         );
-        await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff, emailSent: changeRecipients.length > 0 })
+        await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff, emailSent: changeRecipients.length > 0, kind: 'change' })
             .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
+
+        if (mailError) throw mailError;
+        markSuccess();
         return 'ok';
     } catch (error) {
         mheWatchConsecutiveFailures++;
+        mheWatchStatus.lastError = error.message;
         console.error(`[MHE-Watch] Run failed (${mheWatchConsecutiveFailures} in a row): ${error.message}`, error.debug || '');
 
         // One-time alert if the watcher keeps failing (bad password, captcha, blocked IP...)
@@ -1185,21 +1300,46 @@ async function runMheWatcherOnce() {
                 console.error('[MHE-Watch] Could not send failure alert:', mailErr.message);
             }
         }
-        return 'skipped';
+        return 'failed';
     } finally {
         mheScrapeBusy = false;
     }
 }
 
-// --- Self-rescheduling loop: never overlaps, runs 1 hr AFTER the previous run finished ---
+// Wrapper that records status (used by the schedule AND the manual admin trigger)
+async function executeMheWatcherRun(trigger = 'schedule', opts = {}) {
+    const started = Date.now();
+    mheWatchStatus.running = true;
+    mheWatchStatus.lastTrigger = trigger;
+    let outcome = 'failed';
+    try {
+        outcome = await runMheWatcherOnce(opts);
+    } catch (e) {
+        mheWatchStatus.lastError = e.message;
+        console.error('[MHE-Watch] Unexpected error:', e.message);
+    } finally {
+        mheWatchStatus.running = false;
+        mheWatchStatus.lastRunAt = new Date().toISOString();
+        mheWatchStatus.lastOutcome = outcome;
+        mheWatchStatus.lastDurationMs = Date.now() - started;
+        mheWatchStatus.runs++;
+        console.log(`[MHE-Watch] Run finished: ${outcome} in ${Math.round((Date.now() - started) / 1000)}s`);
+    }
+    return outcome;
+}
+
+// --- Self-rescheduling loop: never overlaps. 1 hr after a good run, sooner after a busy/failed run ---
 const runMheWatcherDaemon = async () => {
     let nextDelay = MHE_WATCH_INTERVAL_MS;
     try {
-        const outcome = await runMheWatcherOnce();
+        const outcome = await executeMheWatcherRun('schedule');
         if (outcome === 'busy') nextDelay = MHE_WATCH_BUSY_RETRY_MS;
+        else if (outcome === 'failed') nextDelay = MHE_WATCH_RETRY_AFTER_FAIL_MS;
     } catch (e) {
         console.error('[MHE-Watch] Daemon error:', e.message);
     } finally {
+        mheWatchStatus.nextRunAt = new Date(Date.now() + nextDelay).toISOString();
+        console.log(`[MHE-Watch] Next run in ${Math.round(nextDelay / 60000)} min.`);
         setTimeout(runMheWatcherDaemon, nextDelay);
     }
 };
@@ -1213,12 +1353,87 @@ function startMheWatcher() {
         console.log('[MHE-Watch] Not started: set MHE_WATCH_USERNAME, MHE_WATCH_PASSWORD and MHE_WATCH_SECTION_ID env vars.');
         return;
     }
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        console.log('[MHE-Watch] Warning: SMTP_USER / SMTP_PASS missing. Scraping will run but emails cannot be sent.');
-    }
-    console.log(`[MHE-Watch] Enabled. First run in ${MHE_WATCH_INITIAL_DELAY_MS / 1000}s, then every ${MHE_WATCH_INTERVAL_MS / 60000} min. Recipients: ${MHE_WATCH_RECIPIENTS.join(', ')}`);
+    console.log(`[MHE-Watch] Enabled. Mail provider: ${mheMailProviderName()}. First run in ${MHE_WATCH_INITIAL_DELAY_MS / 1000}s, then every ${MHE_WATCH_INTERVAL_MS / 60000} min. Recipients: ${MHE_WATCH_RECIPIENTS.join(', ')}`);
+    mheWatchStatus.nextRunAt = new Date(Date.now() + MHE_WATCH_INITIAL_DELAY_MS).toISOString();
+
+    // Check the mail setup right now so a bad config shows up in the logs immediately
+    verifyMailProvider();
+
     setTimeout(runMheWatcherDaemon, MHE_WATCH_INITIAL_DELAY_MS);
 }
+
+// ------------------------------------------------------------
+// ADMIN ENDPOINTS FOR THE WATCHER (same ADMIN_PASSWORD as the admin dashboard)
+//   POST /api/admin/mhe-watch/status      {password}                      -> what is the watcher doing?
+//   POST /api/admin/mhe-watch/test-mail   {password}                      -> send a test email right now
+//   POST /api/admin/mhe-watch/run         {password, resendWelcome?: true} -> run a check right now
+// ------------------------------------------------------------
+const mheAdminLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 60,
+    message: { error: "Too many watcher admin requests, please try again later." }
+});
+
+const mheAdminAuthorized = (req, res) => {
+    if (!req.body || req.body.password !== ADMIN_PASSWORD) {
+        res.status(401).json({ error: "Unauthorized. Incorrect password." });
+        return false;
+    }
+    return true;
+};
+
+app.post('/api/admin/mhe-watch/status', mheAdminLimiter, async (req, res) => {
+    if (!mheAdminAuthorized(req, res)) return;
+    try {
+        const snap = await MheSnapshot.findOne({ key: MHE_WATCH_SNAPSHOT_KEY }).select('-__v');
+        res.json({
+            success: true,
+            enabled: MHE_WATCH_ENABLED,
+            mailProvider: mheMailProviderName(),
+            recipients: MHE_WATCH_RECIPIENTS,
+            sectionId: MHE_WATCH_SECTION_ID,
+            consecutiveFailures: mheWatchConsecutiveFailures,
+            scrapeBusy: mheScrapeBusy,
+            status: mheWatchStatus,
+            snapshot: snap ? {
+                updatedAt: snap.updatedAt,
+                assignments: Array.isArray(snap.data) ? snap.data.length : 0,
+                notifiedRecipients: snap.notifiedRecipients,
+                data: snap.data
+            } : null
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/admin/mhe-watch/test-mail', mheAdminLimiter, async (req, res) => {
+    if (!mheAdminAuthorized(req, res)) return;
+    const stamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const html = mheEmailShell({
+        headerTitle: 'Test email ✅',
+        headerSub: `${escapeHtml(stamp)} (IST)`,
+        headerColor: '#4f46e5',
+        bodyRows: `<tr><td style="padding:22px 28px;font-size:14px;color:#374151;line-height:1.6;">If you can read this, email delivery from the watcher works (provider: <b>${escapeHtml(mheMailProviderName())}</b>).</td></tr>`
+    });
+    try {
+        await sendMheMail('✅ MHE watcher test email', html, `Test email from the MHE watcher (${stamp} IST). Provider: ${mheMailProviderName()}`);
+        res.json({ success: true, provider: mheMailProviderName(), sentTo: MHE_WATCH_RECIPIENTS });
+    } catch (error) {
+        console.error('[MHE-Watch] Test mail failed:', error.message);
+        res.status(500).json({ success: false, provider: mheMailProviderName(), error: error.message });
+    }
+});
+
+app.post('/api/admin/mhe-watch/run', mheAdminLimiter, async (req, res) => {
+    if (!mheAdminAuthorized(req, res)) return;
+    if (mheScrapeBusy) {
+        return res.status(429).json({ error: 'A scrape is already running. Try again in a minute.' });
+    }
+    // Fire and forget: the scrape takes a minute or two. Watch the Render logs or call /status.
+    executeMheWatcherRun('manual', { resendWelcome: req.body.resendWelcome === true });
+    res.status(202).json({ success: true, message: 'Watcher run started. Check the Render logs or call /api/admin/mhe-watch/status.' });
+});
 
 // ============================================================
 // OLT SCRAPING ENGINE 
