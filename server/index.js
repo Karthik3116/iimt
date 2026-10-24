@@ -867,12 +867,7 @@ async function sendViaBrevo(recipients, subject, html, text) {
     }
 }
 
-const { Resend } = require('resend');
-const resendClient = new Resend(process.env.RESEND_API_KEY);
 
-
-// Initialize Resend using your environment variable
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Replace your existing sendMheMail function with this:
 // Replace the existing sendMheMail function with this updated version
