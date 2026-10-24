@@ -870,7 +870,6 @@ async function sendViaBrevo(recipients, subject, html, text) {
 const { Resend } = require('resend');
 const resendClient = new Resend(process.env.RESEND_API_KEY);
 
-const { Resend } = require('resend');
 
 // Initialize Resend using your environment variable
 const resend = new Resend(process.env.RESEND_API_KEY);
