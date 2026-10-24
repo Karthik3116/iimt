@@ -915,16 +915,7 @@ async function sendMheMail(subject, htmlContent, textContent, recipients) {
 async function verifyMailProvider() {
     const provider = mheMailProviderName();
     try {
-        if (provider === 'resend') {
-            console.log('[MHE-Watch] Mail provider check OK: Resend API key is valid.'); // <-- Add this block
-        } else if (provider === 'brevo-api') {
-            await axios.get('https://api.brevo.com/v3/account', {
-                headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
-                timeout: 15000
-            });
-            console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
-        }
-        else if (provider === 'brevo-api') {
+        if (provider === 'brevo-api') {
             await axios.get('https://api.brevo.com/v3/account', {
                 headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
                 timeout: 15000
