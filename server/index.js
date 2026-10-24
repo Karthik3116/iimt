@@ -913,25 +913,21 @@ async function sendMheMail(subject, htmlContent, textContent, recipients) {
 
 // Logged once at startup so problems are visible immediately (not 90 seconds + one scrape later)
 async function verifyMailProvider() {
-    const provider = mheMailProviderName();
     try {
-        if (provider === 'brevo-api') {
-            await axios.get('https://api.brevo.com/v3/account', {
-                headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
-                timeout: 15000
-            });
-            console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
-        } else if (provider === 'smtp') {
-            await getMailTransporter().verify();
-            console.log('[MHE-Watch] Mail provider check OK: SMTP login works.');
-        } else {
-            console.error('[MHE-Watch] Mail provider check FAILED: nothing configured. Set BREVO_API_KEY (+ MAIL_FROM_EMAIL) or SMTP_USER + SMTP_PASS.');
-        }
+        await axios.get('https://api.brevo.com/v3/account', {
+            headers: { 
+                'api-key': process.env.BREVO_API_KEY, 
+                accept: 'application/json' 
+            },
+            timeout: 15000
+        });
+        console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
     } catch (err) {
         const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
-        console.error(`[MHE-Watch] Mail provider check FAILED (${provider}): ${detail}${mheMailErrorHint(err)}`);
+        console.error(`[MHE-Watch] Mail provider check FAILED (brevo-api): ${detail}`);
     }
 }
+
 
 const escapeHtml = (s) => String(s === undefined || s === null ? '' : s)
     .replace(/&/g, '&amp;')

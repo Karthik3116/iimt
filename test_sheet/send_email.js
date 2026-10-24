@@ -1,6 +1,23 @@
 require('dotenv').config();
 const axios = require('axios');
 
+
+async function verifyMailProvider() {
+    try {
+        await axios.get('https://api.brevo.com/v3/account', {
+            headers: { 
+                'api-key': process.env.BREVO_API_KEY, 
+                accept: 'application/json' 
+            },
+            timeout: 15000
+        });
+        console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
+    } catch (err) {
+        const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
+        console.error(`[MHE-Watch] Mail provider check FAILED (brevo-api): ${detail}`);
+    }
+}
+
 async function sendEmail() {
     try {
         const response = await axios.post(
@@ -34,3 +51,4 @@ async function sendEmail() {
 }
 
 sendEmail();
+verifyMailProvider()
