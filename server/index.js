@@ -927,10 +927,10 @@ const MHE_WATCH_RECIPIENTS = (process.env.MHE_WATCH_RECIPIENTS || 'kartheek.p260
 const MHE_WATCH_WELCOME_ENABLED = process.env.MHE_WATCH_NOTIFY_FIRST_RUN !== 'false';
 
 const MHE_WATCH_INTERVAL_MIN = Math.max(5, parseInt(process.env.MHE_WATCH_INTERVAL_MIN || '30', 10) || 30);
-const MHE_WATCH_INTERVAL_MS = MHE_WATCH_INTERVAL_MIN * 60 * 1000;
+const MHE_WATCH_INTERVAL_MS = MHE_WATCH_INTERVAL_MIN * 30 * 1000;
 const MHE_WATCH_BUSY_RETRY_MS = 5 * 60 * 1000;      // if a user scrape is running, retry in 5 min
 const MHE_WATCH_INITIAL_DELAY_MS = 90 * 1000;       // let the server + Excel cache settle first
-const MHE_WATCH_FAILURE_ALERT_AFTER = 3;            // email one alert after N consecutive failures
+const MHE_WATCH_FAILURE_ALERT_AFTER = 5;            // email one alert after N consecutive failures
 const MHE_WATCH_RETRY_AFTER_FAIL_MS = 10 * 60 * 1000; // after a failed run, try again in 10 min
 
 let mheWatchConsecutiveFailures = 0;
