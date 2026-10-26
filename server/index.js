@@ -927,7 +927,7 @@ const MHE_WATCH_RECIPIENTS = (process.env.MHE_WATCH_RECIPIENTS || 'kartheek.p260
 const MHE_WATCH_WELCOME_ENABLED = process.env.MHE_WATCH_NOTIFY_FIRST_RUN !== 'false';
 
 const MHE_WATCH_INTERVAL_MIN = Math.max(5, parseInt(process.env.MHE_WATCH_INTERVAL_MIN || '30', 10) || 30);
-const MHE_WATCH_INTERVAL_MS = MHE_WATCH_INTERVAL_MIN * 30 * 1000;
+const MHE_WATCH_INTERVAL_MS = MHE_WATCH_INTERVAL_MIN * 60 * 1000;
 const MHE_WATCH_BUSY_RETRY_MS = 5 * 60 * 1000;      // if a user scrape is running, retry in 5 min
 const MHE_WATCH_INITIAL_DELAY_MS = 90 * 1000;       // let the server + Excel cache settle first
 const MHE_WATCH_FAILURE_ALERT_AFTER = 5;            // email one alert after N consecutive failures
@@ -1579,6 +1579,73 @@ const mheAdminAuthorized = (req, res) => {
     }
     return true;
 };
+
+// ------------------------------------------------------------
+// ADMIN INSIGHTS (feeds the "Pattern Engine" in Admin.jsx)
+//   POST /api/admin/insights  {password, days?: 7-90}
+// Returns the raw behaviour stream in a compact form; all the
+// modelling (sessions, segments, forecasts, anomalies...) runs in the
+// admin browser so the server stays light.
+//   events : [[unixSeconds, userIndex, nameIndex], ...]  (oldest -> newest)
+//   users  : [email, ...]          names : ["eventType|eventName", ...]
+// ------------------------------------------------------------
+const INSIGHTS_EVENT_LIMIT = 60000;
+
+app.post('/api/admin/insights', mheAdminLimiter, async (req, res) => {
+    if (!mheAdminAuthorized(req, res)) return;
+    try {
+        const days = Math.min(Math.max(parseInt(req.body.days, 10) || 30, 7), 90);
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+        const [totalInWindow, raw, traffic] = await Promise.all([
+            AnalyticsEvent.countDocuments({ timestamp: { $gte: since } }),
+            // newest first so that, if we hit the cap, we keep the most recent behaviour
+            AnalyticsEvent.find({ timestamp: { $gte: since } })
+                .sort({ timestamp: -1 })
+                .limit(INSIGHTS_EVENT_LIMIT)
+                .select('userEmail eventType eventName timestamp -_id')
+                .lean(),
+            TrafficLog.aggregate([
+                { $match: { timestamp: { $gte: since } } },
+                { $group: { _id: { $dateToString: { format: "%Y-%m-%dT%H", date: "$timestamp", timezone: "Asia/Kolkata" } }, hits: { $sum: 1 } } },
+                { $sort: { _id: 1 } }
+            ])
+        ]);
+
+        const users = [];
+        const userIdx = new Map();
+        const names = [];
+        const nameIdx = new Map();
+
+        const events = [];
+        for (let i = raw.length - 1; i >= 0; i--) {
+            const e = raw[i];
+            if (!e.userEmail || !e.timestamp) continue;
+            let u = userIdx.get(e.userEmail);
+            if (u === undefined) { u = users.length; users.push(e.userEmail); userIdx.set(e.userEmail, u); }
+            const nameKey = `${e.eventType || 'interaction'}|${e.eventName || 'unknown'}`;
+            let n = nameIdx.get(nameKey);
+            if (n === undefined) { n = names.length; names.push(nameKey); nameIdx.set(nameKey, n); }
+            events.push([Math.floor(new Date(e.timestamp).getTime() / 1000), u, n]);
+        }
+
+        res.json({
+            success: true,
+            days,
+            since,
+            serverTime: new Date().toISOString(),
+            totalInWindow,
+            truncated: totalInWindow > INSIGHTS_EVENT_LIMIT,
+            users,
+            names,
+            events,
+            traffic: traffic.map(t => ({ hour: t._id, hits: t.hits }))
+        });
+    } catch (error) {
+        console.error('[Admin Insights] Error:', error);
+        res.status(500).json({ error: 'Server error building insights.' });
+    }
+});
 
 app.post('/api/admin/mhe-watch/status', mheAdminLimiter, async (req, res) => {
     if (!mheAdminAuthorized(req, res)) return;
@@ -2583,8 +2650,7 @@ app.listen(PORT, () => {
 // const crypto = require('crypto');
 // const cheerio = require('cheerio');
 // const { google } = require('googleapis'); 
-// const { chromium } = require('playwright'); // --- NEW: Added Playwright ---
-// const nodemailer = require('nodemailer'); // --- NEW: Used by the MHE background watcher to send emails ---
+// const { chromium } = require('playwright');
 
 // // Security middlewares
 // const helmet = require('helmet');
@@ -2681,7 +2747,7 @@ app.listen(PORT, () => {
 // todoSchema.index({ userEmail: 1, date: 1, section: 1, subject: 1 }, { unique: true });
 // const Todo = mongoose.model('Todo', todoSchema);
 
-// // --- NEW: ANALYTICS & TRAFFIC SCHEMAS ---
+// // --- ANALYTICS & TRAFFIC SCHEMAS ---
 // const trafficLogSchema = new mongoose.Schema({
 //     endpoint: String,
 //     method: String,
@@ -2698,17 +2764,19 @@ app.listen(PORT, () => {
 // });
 // const AnalyticsEvent = mongoose.model('AnalyticsEvent', analyticsEventSchema);
 
-// // --- NEW: MHE WATCHER SNAPSHOT SCHEMA (remembers last known assignment state across restarts) ---
+// // --- MHE WATCHER SNAPSHOT SCHEMA (remembers last known assignment state across restarts) ---
 // const mheSnapshotSchema = new mongoose.Schema({
 //     key: { type: String, required: true, unique: true },
 //     hash: { type: String, default: '' },
 //     data: { type: mongoose.Schema.Types.Mixed, default: [] },
 //     notifiedRecipients: { type: [String], default: [] },   // who already got the "added to watch list" email
+//     passedNotified: { type: [String], default: [] },       // "<assignment>|<dueDate>" keys we already emailed as "due date passed"
+//     passedInit: { type: Boolean, default: false },         // false on old snapshots -> silently seed passedNotified once (no spam)
 //     updatedAt: { type: Date, default: Date.now }
 // });
 // const MheSnapshot = mongoose.model('MheSnapshot', mheSnapshotSchema);
 
-// // --- NEW: MHE WATCHER HISTORY (every detected state change is kept for 180 days) ---
+// // --- MHE WATCHER HISTORY (every detected state change is kept for 180 days) ---
 // const mheHistorySchema = new mongoose.Schema({
 //     key: { type: String, required: true, index: true },
 //     hash: String,
@@ -3083,13 +3151,83 @@ app.listen(PORT, () => {
 
 
 // // ============================================================
-// // MCGRAW HILL ASSIGNMENTS SCRAPER (DYNAMIC TIMEOUT & RETRY)
+// // MCGRAW HILL ASSIGNMENTS SCRAPER
+// //  - resilient login (single-step or two-step, fill/type fallback, cookie banner)
+// //  - captures the assignments API response, with a direct re-request fallback
+// //  - whole scrape is retried (not for wrong passwords)
+// //  - every assignment carries due-date info: dueAt (ISO), isPastDue, dueLabel, timeRemainingMs
 // // ============================================================
 
 // let mheScrapeBusy = false;
 // const MHE_MIN_DUE_DATE = process.env.MHE_MIN_DUE_DATE || '2026-10-11';
 
-// async function scrapeMheAssignments({ username, password, sectionId, userEmail }) {
+// const MHE_DONE_KEYS = ['SUBMITTED', 'COMPLETE', 'COMPLETED', 'GRADED', 'DONE'];
+// const MHE_URGENT_MS = 24 * 60 * 60 * 1000; // "due soon" highlight = less than 24h left
+
+// // ---------- due-date helpers ----------
+
+// // Turn whatever MHE gave us ("2026-10-20T18:29:00Z", "2026-10-20 18:29", ...) into a timestamp (ms).
+// // Values without a timezone are treated as UTC (the API returns UTC).
+// function mheParseDue(item) {
+//     if (!item) return null;
+//     const raw = item.dueAt || item.dueDate;
+//     if (!raw || raw === 'No due date') return null;
+//     let s = String(raw).trim().replace(' ', 'T');
+//     if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(s)) s += 'Z';
+//     const ts = Date.parse(s);
+//     return isNaN(ts) ? null : ts;
+// }
+
+// function mheNormalizeDueIso(raw) {
+//     const ts = mheParseDue({ dueDate: raw });
+//     return ts === null ? '' : new Date(ts).toISOString();
+// }
+
+// function mheFormatRemaining(ms) {
+//     const mins = Math.max(0, Math.floor(ms / 60000));
+//     const d = Math.floor(mins / 1440);
+//     const h = Math.floor((mins % 1440) / 60);
+//     const m = mins % 60;
+//     if (d > 0) return `${d}d ${h}h left`;
+//     if (h > 0) return `${h}h ${m}m left`;
+//     return `${Math.max(m, 1)}m left`;
+// }
+
+// function mheFormatIST(ts) {
+//     return new Date(ts).toLocaleString('en-IN', {
+//         timeZone: 'Asia/Kolkata',
+//         day: '2-digit', month: 'short', year: 'numeric',
+//         hour: '2-digit', minute: '2-digit', hour12: true
+//     }) + ' IST';
+// }
+
+// function mheIsDone(status) {
+//     return MHE_DONE_KEYS.includes(String(status || '').toUpperCase().replace(/[_\s-]/g, ''));
+// }
+
+// // { hasDue, isPast, ts, label, urgent }
+// function mheDueInfo(item, now = Date.now()) {
+//     const ts = mheParseDue(item);
+//     if (ts === null) return { hasDue: false, isPast: false, ts: null, label: 'No due date', urgent: false };
+//     const diff = ts - now;
+//     if (diff <= 0) return { hasDue: true, isPast: true, ts, label: 'Due date passed', urgent: false };
+//     return { hasDue: true, isPast: false, ts, label: mheFormatRemaining(diff), urgent: diff < MHE_URGENT_MS };
+// }
+
+// // Adds the fields the frontend / emails need. Keeps every original field untouched.
+// function mheEnrich(item, now = Date.now()) {
+//     const info = mheDueInfo(item, now);
+//     return {
+//         ...item,
+//         dueAt: info.ts ? new Date(info.ts).toISOString() : '',
+//         dueTimestamp: info.ts,
+//         isPastDue: info.isPast,
+//         dueLabel: info.label,                       // "Due date passed" | "2d 5h left" | "No due date"
+//         timeRemainingMs: info.hasDue && !info.isPast ? info.ts - now : 0
+//     };
+// }
+
+// async function scrapeMheOnce({ username, password, sectionId, userEmail }) {
 //     let browser;
 //     try {
 //         const launchOptions = {
@@ -3129,73 +3267,120 @@ app.listen(PORT, () => {
 //         const page = await context.newPage();
 //         page.setDefaultTimeout(60000);
 
-//         // --- Context-level listener: catches the API call from any frame/page ---
+//         // --- Context-level listeners: catch the API call from any frame/page ---
 //         let rawApiData = null;
 //         let resolveCaptured;
 //         const captured = new Promise(r => { resolveCaptured = r; });
 //         const seenApiUrls = [];
+//         let savedRequest = null; // remembered so we can re-request the API ourselves if the body was unreadable
+
+//         const pickPayload = (json) => {
+//             if (!json || typeof json !== 'object') return null;
+//             if (Array.isArray(json.sectionAssignments)) return json;
+//             if (json.data && Array.isArray(json.data.sectionAssignments)) return json.data;
+//             return null;
+//         };
+
+//         context.on('request', (req) => {
+//             try {
+//                 if (req.url().includes('studentAssignments')) {
+//                     const { host, 'content-length': _cl, cookie, connection, ...headers } = req.headers();
+//                     savedRequest = { url: req.url(), headers };
+//                 }
+//             } catch (e) { /* ignore */ }
+//         });
 
 //         context.on('response', async (response) => {
 //             try {
 //                 const url = response.url();
 //                 if (/assignment/i.test(url)) seenApiUrls.push(`${response.status()} ${url.substring(0, 140)}`);
 //                 if (rawApiData) return;
-//                 if (!url.includes('studentAssignments')) return;
+//                 if (!/studentAssignments/i.test(url)) return;
 //                 if (response.status() !== 200) return;
 
-//                 const text = await response.text();
-//                 const json = JSON.parse(text);
-//                 if (json && json.sectionAssignments) {
-//                     rawApiData = json;
+//                 const payload = pickPayload(JSON.parse(await response.text()));
+//                 if (payload) {
+//                     rawApiData = payload;
 //                     resolveCaptured(true);
 //                 }
 //             } catch (e) {
-//                 // body can be unavailable if the page navigated; we retry below
+//                 // body can be unavailable if the page navigated; fallbacks below handle it
 //             }
 //         });
 
-//         // --- LOGIN (fill first, keystroke typing as fallback) ---
+//         // --- LOGIN (fill first, keystroke typing as fallback; handles 1-step and 2-step forms) ---
 //         username = String(username || '').trim();
 //         password = String(password || '');
 //         console.log(`[MHE] ${userEmail} logging in... (user len=${username.length}, pass len=${password.length})`);
 
-//         const emailSel = "input[type='email']";
-//         const passSel = "input[type='password']";
+//         const emailLoc = () => page.locator("input[type='email'], input[name='email'], input#email, input[autocomplete='username']").first();
+//         const passLoc = () => page.locator("input[type='password']").first();
+//         const submitLoc = () => page.locator("button:has-text('Sign In'), button:has-text('Log In'), button:has-text('Login'), button[type='submit']").first();
+//         const nextLoc = () => page.locator("button:has-text('Continue'), button:has-text('Next')").first();
 
 //         const tryLogin = async (mode) => {
 //             await page.goto("https://accounts.mheducation.com/login", { waitUntil: "domcontentloaded" });
 //             await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
-//             await page.waitForSelector(emailSel, { timeout: 25000 });
 
-//             for (const [sel, val] of [[emailSel, username], [passSel, password]]) {
-//                 await page.click(sel);
-//                 await page.fill(sel, '');
-//                 if (mode === 'fill') await page.fill(sel, val);
-//                 else await page.type(sel, val, { delay: 90 });
+//             // Cookie banner can sit on top of the form
+//             await page.click('#onetrust-accept-btn-handler', { timeout: 2500 }).catch(() => {});
+
+//             await emailLoc().waitFor({ state: 'visible', timeout: 25000 });
+
+//             const setValue = async (loc, val) => {
+//                 await loc.click();
+//                 await loc.fill('');
+//                 if (mode === 'fill') await loc.fill(val);
+//                 else if (typeof loc.pressSequentially === 'function') await loc.pressSequentially(val, { delay: 90 });
+//                 else await loc.type(val, { delay: 90 });
+//             };
+
+//             await setValue(emailLoc(), username);
+
+//             // Two-step login: password box only appears after "Continue/Next"
+//             if (!(await passLoc().isVisible().catch(() => false))) {
+//                 if (await nextLoc().isVisible().catch(() => false)) await nextLoc().click();
+//                 else await emailLoc().press('Enter').catch(() => {});
+//                 await passLoc().waitFor({ state: 'visible', timeout: 15000 });
 //             }
 
-//             const emailOk = (await page.inputValue(emailSel)) === username;
-//             const passOk = (await page.inputValue(passSel)) === password;
+//             await setValue(passLoc(), password);
+
+//             const emailOk = (await emailLoc().inputValue().catch(() => username)) === username;
+//             const passOk = (await passLoc().inputValue().catch(() => password)) === password;
 //             console.log(`[MHE] mode=${mode} fieldsMatchInput: email=${emailOk}, password=${passOk}`);
 
-//             await page.click("button:has-text('Sign In')");
+//             if (await submitLoc().isVisible().catch(() => false)) await submitLoc().click();
+//             else await passLoc().press('Enter');
 
 //             // Poll up to 25s: success = left /login, failure = error text shown
 //             for (let i = 0; i < 25; i++) {
 //                 await page.waitForTimeout(1000);
 //                 if (!page.url().includes('/login')) return { ok: true };
 //                 const body = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ');
-//                 if (/do not match any accounts/i.test(body)) {
+//                 if (/do not match any accounts|incorrect (email|password)|invalid (email|password|credentials)/i.test(body)) {
 //                     return { ok: false, reason: 'BAD_CREDS', emailOk, passOk };
+//                 }
+//                 if (/captcha|verify you are (a )?human/i.test(body)) {
+//                     return { ok: false, reason: 'CAPTCHA', emailOk, passOk };
 //                 }
 //             }
 //             return { ok: false, reason: 'NO_REDIRECT', emailOk, passOk };
 //         };
 
-//         let result = await tryLogin('fill');
-//         if (!result.ok) {
-//             console.log(`[MHE] fill mode failed (${result.reason}), retrying with typed input...`);
-//             result = await tryLogin('type');
+//         let result;
+//         try {
+//             result = await tryLogin('fill');
+//         } catch (e) {
+//             result = { ok: false, reason: 'LOGIN_ERROR', message: e.message };
+//         }
+//         if (!result.ok && result.reason !== 'BAD_CREDS') {
+//             console.log(`[MHE] fill mode failed (${result.reason}${result.message ? ': ' + result.message : ''}), retrying with typed input...`);
+//             try {
+//                 result = await tryLogin('type');
+//             } catch (e) {
+//                 result = { ok: false, reason: 'LOGIN_ERROR', message: e.message };
+//             }
 //         }
 
 //         if (!result.ok) {
@@ -3234,6 +3419,20 @@ app.listen(PORT, () => {
 //             ok = await waitForCapture(30000);
 //         }
 
+//         // Fallback: we saw the request but could not read the body -> call the same API ourselves (cookies are shared)
+//         if ((!ok || !rawApiData) && savedRequest) {
+//             try {
+//                 console.log("[MHE] Re-requesting assignments API directly...");
+//                 const apiRes = await context.request.get(savedRequest.url, { headers: savedRequest.headers, timeout: 30000 });
+//                 if (apiRes.ok()) {
+//                     const payload = pickPayload(await apiRes.json());
+//                     if (payload) { rawApiData = payload; ok = true; }
+//                 }
+//             } catch (e) {
+//                 console.log("[MHE] Direct API fallback failed:", e.message);
+//             }
+//         }
+
 //         if (!ok || !rawApiData) {
 //             let bodySnippet = '';
 //             try {
@@ -3265,7 +3464,12 @@ app.listen(PORT, () => {
 
 //             const dueClean = details.due ? details.due.replace("T", " ").substring(0, 16) : 'No due date';
 //             if (dueClean === 'No due date' || dueClean >= MHE_MIN_DUE_DATE) {
-//                 list.push({ status: s.status || 'UNKNOWN', dueDate: dueClean, name: details.name });
+//                 list.push({
+//                     status: s.status || 'UNKNOWN',
+//                     dueDate: dueClean,                              // same format as before (hash/diff stay compatible)
+//                     dueAt: mheNormalizeDueIso(details.due),         // full ISO timestamp for countdowns
+//                     name: details.name
+//                 });
 //             }
 //         }
 
@@ -3274,6 +3478,22 @@ app.listen(PORT, () => {
 //     } finally {
 //         if (browser) await browser.close().catch(() => {});
 //     }
+// }
+
+// // Retries the whole scrape (fresh browser each time). Wrong passwords are never retried.
+// async function scrapeMheAssignments(opts, attempts = 2) {
+//     let lastErr;
+//     for (let i = 1; i <= attempts; i++) {
+//         try {
+//             return await scrapeMheOnce(opts);
+//         } catch (err) {
+//             lastErr = err;
+//             if (err.code === 'BAD_CREDS') throw err;
+//             console.warn(`[MHE] Scrape attempt ${i}/${attempts} failed: ${err.message}`);
+//             if (i < attempts) await new Promise(r => setTimeout(r, 5000 * i));
+//         }
+//     }
+//     throw lastErr;
 // }
 
 
@@ -3290,13 +3510,15 @@ app.listen(PORT, () => {
 
 //     mheScrapeBusy = true;
 //     try {
-//         const data = await scrapeMheAssignments({
+//         const list = await scrapeMheAssignments({
 //             username: mheUsername,
 //             password: mhePassword,
 //             sectionId: String(sectionId).trim(),
 //             userEmail: req.user.email
-//         });
-//         return res.status(200).json({ success: true, count: data.length, data });
+//         }, 2);
+//         const now = Date.now();
+//         const data = list.map(item => mheEnrich(item, now));
+//         return res.status(200).json({ success: true, count: data.length, serverTime: new Date(now).toISOString(), data });
 //     } catch (error) {
 //         console.error(`[MHE] Error for ${req.user.email}: ${error.message}`, error.debug || '');
 //         const status = error.code === 'BAD_CREDS' ? 400 : 500;
@@ -3310,29 +3532,28 @@ app.listen(PORT, () => {
 // });
 
 // // ============================================================
-// // MCGRAW HILL BACKGROUND WATCHER (NEW)
-// // Runs the same scrape as the "Assignments" tab once every hour
-// // using credentials from environment variables, compares the
-// // result with the last saved snapshot (stored in MongoDB so it
-// // survives restarts) and emails the recipients ONLY if something
-// // changed (new / removed assignment, status change, due date change).
+// // MCGRAW HILL BACKGROUND WATCHER
+// // Runs the same scrape as the "Assignments" tab on a schedule using
+// // credentials from environment variables, compares the result with the
+// // last saved snapshot (stored in MongoDB so it survives restarts) and
+// // emails the recipients when ANYTHING changes:
+// //   - new assignment            - removed assignment
+// //   - status change             - due date change
+// //   - due date has PASSED while the assignment is still not submitted
+// // Every assignment in the email shows "Due date passed" or the remaining time.
 // //
 // // Required env vars (set on Render / in .env):
 // //   MHE_WATCH_USERNAME     e.g. kartheek.p26030@iimtrichy.ac.in
 // //   MHE_WATCH_PASSWORD     your McGraw Hill password
 // //   MHE_WATCH_SECTION_ID   e.g. 157468169
-// //   MAIL DELIVERY - configure ONE of these:
-// //     A) BREVO_API_KEY + MAIL_FROM_EMAIL   sends over HTTPS, works on Render FREE
-// //        (MAIL_FROM_EMAIL must be a sender you verified inside Brevo)
-// //     B) SMTP_USER + SMTP_PASS             Gmail SMTP with an *App Password*.
-// //        Render FREE web services BLOCK SMTP ports (25/465/587), so B needs a paid instance.
+// //   BREVO_API_KEY          mail is sent over HTTPS via Brevo (works on Render FREE)
+// //   MAIL_FROM_EMAIL        a sender you verified inside Brevo
 // // Optional:
-// //   MHE_WATCH_RECIPIENTS   comma separated (default: kartheek.p26030@iimtrichy.ac.in,sasank.p26036@iimtrichy.ac.in)
-// //   MHE_WATCH_ENABLED      set to "false" to switch the watcher off
-// //   MHE_WATCH_NOTIFY_FIRST_RUN  set to "false" to NOT send the one-time welcome / watch-list email
-// //   SMTP_HOST / SMTP_PORT  (default smtp.gmail.com / 465)
-// //   MAIL_FROM              custom "From" header (SMTP mode)
-// //   MAIL_FROM_NAME         display name used in Brevo mode (default: IIMT Assignment Watcher)
+// //   MHE_WATCH_RECIPIENTS        comma separated (default: kartheek.p26030@iimtrichy.ac.in,sasank.p26036@iimtrichy.ac.in)
+// //   MHE_WATCH_ENABLED           "false" switches the watcher off
+// //   MHE_WATCH_NOTIFY_FIRST_RUN  "false" disables the one-time welcome / watch-list email
+// //   MHE_WATCH_INTERVAL_MIN      minutes between checks (default 30)
+// //   MAIL_FROM_NAME              display name (default: IIMT Assignment Watcher)
 // // ============================================================
 
 // const MHE_WATCH_ENABLED = process.env.MHE_WATCH_ENABLED !== 'false';
@@ -3344,14 +3565,14 @@ app.listen(PORT, () => {
 //     .map(s => s.trim())
 //     .filter(Boolean);
 // // ON by default: every recipient gets a one-time "you've been added to the watch list" email with the current status.
-// // Set MHE_WATCH_NOTIFY_FIRST_RUN=false to disable it.
 // const MHE_WATCH_WELCOME_ENABLED = process.env.MHE_WATCH_NOTIFY_FIRST_RUN !== 'false';
 
-// const MHE_WATCH_INTERVAL_MS = 60 * 60 * 1000;       // 1 hour between runs
+// const MHE_WATCH_INTERVAL_MIN = Math.max(5, parseInt(process.env.MHE_WATCH_INTERVAL_MIN || '30', 10) || 30);
+// const MHE_WATCH_INTERVAL_MS = MHE_WATCH_INTERVAL_MIN * 30 * 1000;
 // const MHE_WATCH_BUSY_RETRY_MS = 5 * 60 * 1000;      // if a user scrape is running, retry in 5 min
 // const MHE_WATCH_INITIAL_DELAY_MS = 90 * 1000;       // let the server + Excel cache settle first
-// const MHE_WATCH_FAILURE_ALERT_AFTER = 3;            // email one alert after N consecutive failures
-// const MHE_WATCH_RETRY_AFTER_FAIL_MS = 10 * 60 * 1000; // after a failed run, try again in 10 min (not a full hour)
+// const MHE_WATCH_FAILURE_ALERT_AFTER = 5;            // email one alert after N consecutive failures
+// const MHE_WATCH_RETRY_AFTER_FAIL_MS = 10 * 60 * 1000; // after a failed run, try again in 10 min
 
 // let mheWatchConsecutiveFailures = 0;
 // let mheWatchFailureAlertSent = false;
@@ -3371,128 +3592,69 @@ app.listen(PORT, () => {
 // const MHE_WATCH_SNAPSHOT_KEY = `mhe-watch:${MHE_WATCH_SECTION_ID}`;
 
 // // ------------------------------------------------------------
-// // MAIL DELIVERY
-// //   A) BREVO_API_KEY set  -> sends over HTTPS (works on Render FREE, which blocks SMTP ports)
-// //   B) SMTP_USER/SMTP_PASS -> classic SMTP (needs a PAID Render instance, or running locally)
+// // MAIL DELIVERY (Brevo HTTPS API)
 // // ------------------------------------------------------------
 // function mheMailProviderName() {
-    
 //     if (process.env.BREVO_API_KEY) return 'brevo-api';
-    
 //     return 'none';
 // }
 
-// let mailTransporter = null;
-// function getMailTransporter() {
-//     if (mailTransporter) return mailTransporter;
-//     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
-
-//     const port = parseInt(process.env.SMTP_PORT || '465', 10);
-//     mailTransporter = nodemailer.createTransport({
-//         host: process.env.SMTP_HOST || 'smtp.gmail.com',
-//         port,
-//         secure: port === 465,
-//         auth: {
-//             user: process.env.SMTP_USER,
-//             pass: process.env.SMTP_PASS
-//         },
-//         // Fail fast instead of hanging ~2 minutes when the port is blocked
-//         connectionTimeout: 15000,
-//         greetingTimeout: 15000,
-//         socketTimeout: 30000
-//     });
-//     return mailTransporter;
-// }
-
-// function mheMailErrorHint(err) {
-//     const code = err && err.code;
-//     if (['ETIMEDOUT', 'ECONNECTION', 'ESOCKET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'].includes(code)) {
-//         return ' (Outbound SMTP looks blocked. Render FREE web services block SMTP ports 25/465/587. Set BREVO_API_KEY to send over HTTPS, or upgrade to a paid instance.)';
-//     }
-//     if (code === 'EAUTH') {
-//         return ' (Gmail rejected the login. SMTP_PASS must be a 16-character Gmail App Password and 2-step verification must be on.)';
-//     }
-//     return '';
-// }
-
-// async function sendViaBrevo(recipients, subject, html, text) {
-//     const fromEmail = process.env.MAIL_FROM_EMAIL || process.env.SMTP_USER;
-//     if (!fromEmail) {
-//         throw new Error('MAIL_FROM_EMAIL is not set (use an address you verified as a sender in Brevo).');
-//     }
-//     try {
-//         await axios.post('https://api.brevo.com/v3/smtp/email', {
-//             sender: { name: process.env.MAIL_FROM_NAME || 'IIMT Assignment Watcher', email: fromEmail },
-//             to: recipients.map(email => ({ email })),
-//             subject,
-//             htmlContent: html,
-//             textContent: text
-//         }, {
-//             headers: {
-//                 'api-key': process.env.BREVO_API_KEY,
-//                 'content-type': 'application/json',
-//                 accept: 'application/json'
-//             },
-//             timeout: 20000
-//         });
-//     } catch (err) {
-//         const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
-//         throw new Error(`Brevo API send failed: ${detail}`);
-//     }
-// }
-
-
-
-// // Replace your existing sendMheMail function with this:
-// // Replace the existing sendMheMail function with this updated version
 // async function sendMheMail(subject, htmlContent, textContent, recipients) {
-//     // If no specific recipients are passed (e.g., for failure alerts), fallback to the default list
-//     const targetRecipients = (recipients && recipients.length > 0) 
-//         ? recipients 
-//         : MHE_WATCH_RECIPIENTS;
-
-//     // Brevo expects the 'to' field to be an array of objects: [{ email: "..." }]
+//     // If no specific recipients are passed (e.g., failure alerts), fall back to the default list
+//     const targetRecipients = (recipients && recipients.length > 0) ? recipients : MHE_WATCH_RECIPIENTS;
 //     const toArray = targetRecipients.map(email => ({ email }));
 
-//     try {
-//         const response = await axios.post(
-//             'https://api.brevo.com/v3/smtp/email',
-//             {
-//                 sender: { 
-//                     name: process.env.MAIL_FROM_NAME || "IIMT Assignment Watcher", 
-//                     email: process.env.MAIL_FROM_EMAIL || "copypasteenbl@gmail.com" // Your verified sender
-//                 },
-//                 to: toArray,
-//                 subject: subject,
-//                 htmlContent: htmlContent,
-//                 textContent: textContent
-//             },
-//             {
-//                 headers: {
-//                     'api-key': process.env.BREVO_API_KEY,
-//                     'Content-Type': 'application/json',
-//                     'accept': 'application/json'
-//                 }
-//             }
-//         );
-
-//         console.log('[MHE-Watch] Email sent successfully via Brevo! Message ID:', response.data.messageId);
-//         return true;
-//     } catch (error) {
-//         console.error('[MHE-Watch] Failed to send email via Brevo. Error details:');
-//         console.error(error.response ? error.response.data : error.message);
-//         throw new Error(`Brevo API send failed: ${error.message}`);
+//     if (!process.env.BREVO_API_KEY) {
+//         throw new Error('BREVO_API_KEY is not set, cannot send email.');
 //     }
+
+//     let lastDetail = '';
+//     for (let attempt = 1; attempt <= 3; attempt++) {
+//         try {
+//             const response = await axios.post(
+//                 'https://api.brevo.com/v3/smtp/email',
+//                 {
+//                     sender: {
+//                         name: process.env.MAIL_FROM_NAME || "IIMT Assignment Watcher",
+//                         email: process.env.MAIL_FROM_EMAIL || "copypasteenbl@gmail.com" // must be a verified Brevo sender
+//                     },
+//                     to: toArray,
+//                     subject,
+//                     htmlContent,
+//                     textContent
+//                 },
+//                 {
+//                     headers: {
+//                         'api-key': process.env.BREVO_API_KEY,
+//                         'Content-Type': 'application/json',
+//                         'accept': 'application/json'
+//                     },
+//                     timeout: 20000
+//                 }
+//             );
+//             console.log('[MHE-Watch] Email sent via Brevo. Message ID:', response.data && response.data.messageId);
+//             return true;
+//         } catch (error) {
+//             const status = error.response && error.response.status;
+//             lastDetail = error.response ? `HTTP ${status} ${JSON.stringify(error.response.data)}` : error.message;
+//             console.error(`[MHE-Watch] Brevo send attempt ${attempt}/3 failed: ${lastDetail}`);
+//             // 4xx (except 429) = a config / payload problem, retrying will not help
+//             if (status && status < 500 && status !== 429) break;
+//             if (attempt < 3) await new Promise(r => setTimeout(r, 3000 * attempt));
+//         }
+//     }
+//     throw new Error(`Brevo API send failed: ${lastDetail}`);
 // }
 
-// // Logged once at startup so problems are visible immediately (not 90 seconds + one scrape later)
+// // Logged once at startup so problems are visible immediately
 // async function verifyMailProvider() {
+//     if (!process.env.BREVO_API_KEY) {
+//         console.error('[MHE-Watch] Mail provider check FAILED: BREVO_API_KEY is not set.');
+//         return;
+//     }
 //     try {
 //         await axios.get('https://api.brevo.com/v3/account', {
-//             headers: { 
-//                 'api-key': process.env.BREVO_API_KEY, 
-//                 accept: 'application/json' 
-//             },
+//             headers: { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
 //             timeout: 15000
 //         });
 //         console.log('[MHE-Watch] Mail provider check OK: Brevo API key is valid.');
@@ -3517,11 +3679,13 @@ app.listen(PORT, () => {
 //         const baseKey = String(item.name || 'Unknown').trim();
 //         seen[baseKey] = (seen[baseKey] || 0) + 1;
 //         const key = seen[baseKey] > 1 ? `${baseKey} #${seen[baseKey]}` : baseKey;
-//         map.set(key, { name: baseKey, status: item.status, dueDate: item.dueDate });
+//         map.set(key, { name: baseKey, status: item.status, dueDate: item.dueDate, dueAt: item.dueAt || '' });
 //     }
 //     return map;
 // }
 
+// // NOTE: the hash only looks at name + status + dueDate (same as before), so deploying this version
+// // does NOT look like a "change" to the already-saved snapshot.
 // function mheHashList(list) {
 //     const normalized = Array.from(mheListToMap(list).entries())
 //         .sort((a, b) => a[0].localeCompare(b[0]))
@@ -3544,14 +3708,26 @@ app.listen(PORT, () => {
 //             added.push(n);
 //             continue;
 //         }
-//         if (o.status !== n.status) statusChanged.push({ name: key, from: o.status, to: n.status, dueDate: n.dueDate });
-//         if (o.dueDate !== n.dueDate) dueChanged.push({ name: key, from: o.dueDate, to: n.dueDate });
+//         if (o.status !== n.status) statusChanged.push({ name: key, from: o.status, to: n.status, dueDate: n.dueDate, dueAt: n.dueAt });
+//         if (o.dueDate !== n.dueDate) dueChanged.push({ name: key, from: o.dueDate, to: n.dueDate, toAt: n.dueAt, status: n.status });
 //     }
 //     for (const [key, o] of oldMap.entries()) {
 //         if (!newMap.has(key)) removed.push(o);
 //     }
 
-//     return { added, removed, statusChanged, dueChanged };
+//     return { added, removed, statusChanged, dueChanged, nowPassed: [] };
+// }
+
+// // Assignments whose due date has passed and which are not submitted yet.
+// // passKey includes the due date, so if the deadline is extended and later passes again, we notify again.
+// function mhePassedItems(list, now = Date.now()) {
+//     const out = [];
+//     for (const [key, v] of mheListToMap(list).entries()) {
+//         if (mheIsDone(v.status)) continue;
+//         if (!mheDueInfo(v, now).isPast) continue;
+//         out.push({ passKey: `${key}|${v.dueDate}`, item: { ...v, name: key } });
+//     }
+//     return out;
 // }
 
 // // ------------------------------------------------------------
@@ -3586,6 +3762,28 @@ app.listen(PORT, () => {
 //     return `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${c.bg};color:${c.fg};font-size:12px;font-weight:700;">${escapeHtml(mheStatusLabel(status))}</span>`;
 // }
 
+// // "Due date passed" (red)  |  "5h 20m left" (amber if < 24h, else blue)  |  "No due date" (grey)
+// function mheDueBadge(item) {
+//     const info = mheDueInfo(item);
+//     let bg = '#e5e7eb', fg = '#374151', text = info.label;
+//     if (info.isPast) { bg = '#fee2e2'; fg = '#991b1b'; text = 'DUE DATE PASSED'; }
+//     else if (info.hasDue && info.urgent) { bg = '#fef3c7'; fg = '#92400e'; text = info.label.toUpperCase(); }
+//     else if (info.hasDue) { bg = '#dbeafe'; fg = '#1e40af'; text = info.label.toUpperCase(); }
+//     return `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${bg};color:${fg};font-size:12px;font-weight:700;">${escapeHtml(text)}</span>`;
+// }
+
+// // Human readable due date in IST (falls back to the raw string)
+// function mheDueDisplay(item) {
+//     const ts = mheParseDue(item);
+//     if (ts !== null) return mheFormatIST(ts);
+//     return (item && item.dueDate) || 'No due date';
+// }
+
+// function mheDueText(item) {
+//     const info = mheDueInfo(item);
+//     return info.isPast ? 'DUE DATE PASSED' : info.label;
+// }
+
 // function mheCard(accent, mainHtml, subHtml) {
 //     return `<div style="border-left:4px solid ${accent};background:#f9fafb;border-radius:6px;padding:10px 14px;margin-bottom:8px;">` +
 //         `<div style="font-size:14px;font-weight:600;color:#111827;">${mainHtml}</div>` +
@@ -3613,7 +3811,8 @@ app.listen(PORT, () => {
 //     const rows = (list || []).map((i, idx) =>
 //         `<tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f9fafb'};">` +
 //         `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#111827;">${escapeHtml(i.name)}</td>` +
-//         `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#4b5563;white-space:nowrap;">${escapeHtml(i.dueDate)}</td>` +
+//         `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#4b5563;">` +
+//             `<div style="white-space:nowrap;margin-bottom:4px;">${escapeHtml(mheDueDisplay(i))}</div>${mheDueBadge(i)}</td>` +
 //         `<td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${mheBadge(i.status)}</td>` +
 //         `</tr>`
 //     ).join('');
@@ -3625,7 +3824,7 @@ app.listen(PORT, () => {
 //         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;border-collapse:separate;overflow:hidden;">` +
 //         `<tr style="background:#eef2ff;">` +
 //         `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;">ASSIGNMENT</td>` +
-//         `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;">DUE</td>` +
+//         `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;">DUE / TIME LEFT</td>` +
 //         `<td style="padding:10px 12px;font-size:12px;font-weight:700;color:#4338ca;text-align:right;">STATUS</td></tr>` +
 //         `${body}</table></td></tr>`;
 // }
@@ -3640,18 +3839,20 @@ app.listen(PORT, () => {
 //         `<div style="font-size:12px;color:#e0e7ff;margin-top:6px;">${headerSub}</div>` +
 //         `</td></tr>` +
 //         `${bodyRows}` +
-//         `<tr><td style="padding:22px 28px;text-align:center;font-size:11px;color:#9ca3af;">Sent automatically by IIMT Assignment Watcher · checks every hour</td></tr>` +
+//         `<tr><td style="padding:22px 28px;text-align:center;font-size:11px;color:#9ca3af;">Sent automatically by IIMT Assignment Watcher · checks every ${MHE_WATCH_INTERVAL_MIN} min · times shown in IST</td></tr>` +
 //         `</table></td></tr></table></body></html>`;
 // }
 
 // function mheBuildChangeEmail(diff, newList) {
 //     const { added, removed, statusChanged, dueChanged } = diff;
+//     const nowPassed = diff.nowPassed || [];
 //     const stamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
 //     let body = mheChips([
 //         { label: 'NEW', count: added.length, bg: '#dcfce7', fg: '#166534' },
 //         { label: 'STATUS', count: statusChanged.length, bg: '#dbeafe', fg: '#1e40af' },
 //         { label: 'DUE DATE', count: dueChanged.length, bg: '#fef3c7', fg: '#92400e' },
+//         { label: 'DUE PASSED', count: nowPassed.length, bg: '#fee2e2', fg: '#991b1b' },
 //         { label: 'REMOVED', count: removed.length, bg: '#fee2e2', fg: '#991b1b' }
 //     ]);
 
@@ -3659,28 +3860,37 @@ app.listen(PORT, () => {
 
 //     if (added.length) {
 //         body += mheSection('🆕 New assignments', '#16a34a', added.map(a =>
-//             mheCard('#16a34a', escapeHtml(a.name), `Due ${escapeHtml(a.dueDate)} &nbsp;·&nbsp; ${mheBadge(a.status)}`)).join(''));
-//         textParts.push(`NEW ASSIGNMENTS (${added.length})\n` + added.map(a => `- ${a.name} | due ${a.dueDate} | ${a.status}`).join('\n'));
+//             mheCard('#16a34a', escapeHtml(a.name), `Due ${escapeHtml(mheDueDisplay(a))} &nbsp;·&nbsp; ${mheDueBadge(a)} &nbsp;·&nbsp; ${mheBadge(a.status)}`)).join(''));
+//         textParts.push(`NEW ASSIGNMENTS (${added.length})\n` + added.map(a => `- ${a.name} | due ${mheDueDisplay(a)} (${mheDueText(a)}) | ${mheStatusLabel(a.status)}`).join('\n'));
+//     }
+//     if (nowPassed.length) {
+//         body += mheSection('⏰ Due date passed (not submitted)', '#b91c1c', nowPassed.map(p =>
+//             mheCard('#b91c1c', escapeHtml(p.name), `Was due ${escapeHtml(mheDueDisplay(p))} &nbsp;·&nbsp; ${mheDueBadge(p)} &nbsp;·&nbsp; ${mheBadge(p.status)}`)).join(''));
+//         textParts.push(`DUE DATE PASSED (${nowPassed.length})\n` + nowPassed.map(p => `- ${p.name} | was due ${mheDueDisplay(p)} | ${mheStatusLabel(p.status)}`).join('\n'));
 //     }
 //     if (statusChanged.length) {
 //         body += mheSection('🔄 Status changes', '#2563eb', statusChanged.map(s =>
-//             mheCard('#2563eb', escapeHtml(s.name), `${mheBadge(s.from)} &nbsp;→&nbsp; ${mheBadge(s.to)} &nbsp;·&nbsp; Due ${escapeHtml(s.dueDate)}`)).join(''));
-//         textParts.push(`STATUS CHANGES (${statusChanged.length})\n` + statusChanged.map(s => `- ${s.name}: ${s.from} -> ${s.to} (due ${s.dueDate})`).join('\n'));
+//             mheCard('#2563eb', escapeHtml(s.name), `${mheBadge(s.from)} &nbsp;→&nbsp; ${mheBadge(s.to)} &nbsp;·&nbsp; Due ${escapeHtml(mheDueDisplay(s))} &nbsp;·&nbsp; ${mheDueBadge(s)}`)).join(''));
+//         textParts.push(`STATUS CHANGES (${statusChanged.length})\n` + statusChanged.map(s => `- ${s.name}: ${mheStatusLabel(s.from)} -> ${mheStatusLabel(s.to)} (due ${mheDueDisplay(s)}, ${mheDueText(s)})`).join('\n'));
 //     }
 //     if (dueChanged.length) {
-//         body += mheSection('📅 Due date changes', '#d97706', dueChanged.map(d =>
-//             mheCard('#d97706', escapeHtml(d.name), `<s style="color:#9ca3af;">${escapeHtml(d.from)}</s> &nbsp;→&nbsp; <b style="color:#92400e;">${escapeHtml(d.to)}</b>`)).join(''));
-//         textParts.push(`DUE DATE CHANGES (${dueChanged.length})\n` + dueChanged.map(d => `- ${d.name}: ${d.from} -> ${d.to}`).join('\n'));
+//         body += mheSection('📅 Due date changes', '#d97706', dueChanged.map(d => {
+//             const oldItem = { dueDate: d.from };
+//             const newItem = { dueDate: d.to, dueAt: d.toAt };
+//             return mheCard('#d97706', escapeHtml(d.name),
+//                 `<s style="color:#9ca3af;">${escapeHtml(mheDueDisplay(oldItem))}</s> &nbsp;→&nbsp; <b style="color:#92400e;">${escapeHtml(mheDueDisplay(newItem))}</b> &nbsp;·&nbsp; ${mheDueBadge(newItem)}`);
+//         }).join(''));
+//         textParts.push(`DUE DATE CHANGES (${dueChanged.length})\n` + dueChanged.map(d => `- ${d.name}: ${mheDueDisplay({ dueDate: d.from })} -> ${mheDueDisplay({ dueDate: d.to, dueAt: d.toAt })} (${mheDueText({ dueDate: d.to, dueAt: d.toAt })})`).join('\n'));
 //     }
 //     if (removed.length) {
 //         body += mheSection('🗑️ Removed assignments', '#dc2626', removed.map(r =>
-//             mheCard('#dc2626', escapeHtml(r.name), `Was due ${escapeHtml(r.dueDate)} &nbsp;·&nbsp; ${mheBadge(r.status)}`)).join(''));
-//         textParts.push(`REMOVED ASSIGNMENTS (${removed.length})\n` + removed.map(r => `- ${r.name} | was due ${r.dueDate} | ${r.status}`).join('\n'));
+//             mheCard('#dc2626', escapeHtml(r.name), `Was due ${escapeHtml(mheDueDisplay(r))} &nbsp;·&nbsp; ${mheBadge(r.status)}`)).join(''));
+//         textParts.push(`REMOVED ASSIGNMENTS (${removed.length})\n` + removed.map(r => `- ${r.name} | was due ${mheDueDisplay(r)} | ${mheStatusLabel(r.status)}`).join('\n'));
 //     }
 
 //     body += mheListTable(newList);
 
-//     const total = added.length + removed.length + statusChanged.length + dueChanged.length;
+//     const total = added.length + removed.length + statusChanged.length + dueChanged.length + nowPassed.length;
 
 //     const html = mheEmailShell({
 //         headerTitle: `${total} update${total === 1 ? '' : 's'} detected`,
@@ -3693,15 +3903,16 @@ app.listen(PORT, () => {
 //         `McGraw Hill assignments updated (${stamp} IST)\n\n` +
 //         textParts.join('\n\n') +
 //         `\n\nCURRENT LIST (${(newList || []).length})\n` +
-//         (newList || []).map(i => `- ${i.name} | due ${i.dueDate} | ${i.status}`).join('\n');
+//         (newList || []).map(i => `- ${i.name} | due ${mheDueDisplay(i)} | ${mheDueText(i)} | ${mheStatusLabel(i.status)}`).join('\n');
 
 //     const bits = [];
 //     if (added.length) bits.push(`${added.length} new`);
+//     if (nowPassed.length) bits.push(`${nowPassed.length} due date passed`);
 //     if (statusChanged.length) bits.push(`${statusChanged.length} status`);
 //     if (dueChanged.length) bits.push(`${dueChanged.length} due date`);
 //     if (removed.length) bits.push(`${removed.length} removed`);
 
-//     return { subject: `📚 MHE update: ${bits.join(', ')}`, html, text };
+//     return { subject: `📚 MHE update: ${bits.join(', ')}`, html, text, total };
 // }
 
 // function mheBuildWelcomeEmail(list, recipients) {
@@ -3715,10 +3926,15 @@ app.listen(PORT, () => {
 //         if (!counts[k]) counts[k] = { status: i.status, count: 0 };
 //         counts[k].count++;
 //     });
-//     const chips = mheChips(Object.values(counts).map(c => {
+//     const statusChips = Object.values(counts).map(c => {
 //         const col = mheStatusColors(c.status);
 //         return { label: mheStatusLabel(c.status), count: c.count, bg: col.bg, fg: col.fg };
-//     }));
+//     });
+//     const passedCount = items.filter(i => mheDueInfo(i).isPast).length;
+//     const chips = mheChips([
+//         ...statusChips,
+//         { label: 'DUE PASSED', count: passedCount, bg: '#fee2e2', fg: '#991b1b' }
+//     ]);
 
 //     const watchList = (recipients && recipients.length ? recipients : MHE_WATCH_RECIPIENTS)
 //         .map(r => `<span style="display:inline-block;background:#eef2ff;color:#4338ca;border-radius:999px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0;">${escapeHtml(r)}</span>`)
@@ -3727,7 +3943,7 @@ app.listen(PORT, () => {
 //     let body =
 //         `<tr><td style="padding:22px 28px 0 28px;font-size:14px;color:#374151;line-height:1.6;">` +
 //         `Hi 👋 You’ve been added to the <b>McGraw Hill assignment watch list</b>.<br>` +
-//         `We check McGraw Hill Connect every hour and email you as soon as an assignment is added, removed, or its status or due date changes.` +
+//         `We check McGraw Hill Connect every ${MHE_WATCH_INTERVAL_MIN} minutes and email you as soon as an assignment is added, removed, its status or due date changes, or a due date passes.` +
 //         `</td></tr>` +
 //         `<tr><td style="padding:14px 28px 0 28px;font-size:12px;color:#6b7280;">Watch list:<br>${watchList}</td></tr>` +
 //         `<tr><td style="padding:22px 28px 0 28px;font-size:14px;font-weight:700;color:#111827;">📊 Current status</td></tr>` +
@@ -3743,9 +3959,9 @@ app.listen(PORT, () => {
 
 //     const text =
 //         `You've been added to the McGraw Hill assignment watch list (${stamp} IST)\n` +
-//         `You'll get an email whenever an assignment is added, removed, or its status / due date changes.\n\n` +
+//         `You'll get an email whenever an assignment is added, removed, its status / due date changes, or a due date passes.\n\n` +
 //         `CURRENT STATUS (${items.length})\n` +
-//         (items.length ? items.map(i => `- ${i.name} | due ${i.dueDate} | ${mheStatusLabel(i.status)}`).join('\n') : '- No assignments');
+//         (items.length ? items.map(i => `- ${i.name} | due ${mheDueDisplay(i)} | ${mheDueText(i)} | ${mheStatusLabel(i.status)}`).join('\n') : '- No assignments');
 
 //     return { subject: `🔔 You’ve been added to the MHE assignment watch list (${items.length} tracked)`, html, text };
 // }
@@ -3797,14 +4013,21 @@ app.listen(PORT, () => {
 //             password: MHE_WATCH_PASSWORD,
 //             sectionId: String(MHE_WATCH_SECTION_ID).trim(),
 //             userEmail: `watcher:${MHE_WATCH_USERNAME}`
-//         });
+//         }, 3);
 //         console.log(`[MHE-Watch] Scrape OK (${list.length} assignments).`);
 
+//         const now = Date.now();
 //         const newHash = mheHashList(list);
 //         const previous = await MheSnapshot.findOne({ key: MHE_WATCH_SNAPSHOT_KEY });
 
+//         // Safety net: an empty result after we tracked assignments is almost certainly a bad page load,
+//         // not "everything was deleted". Treat it as a failure (retried in 10 min) instead of spamming a change mail.
+//         const prevCount = previous && Array.isArray(previous.data) ? previous.data.length : 0;
+//         if (list.length === 0 && prevCount > 0) {
+//             throw new Error(`Scrape returned 0 assignments but ${prevCount} were being tracked - ignoring this run as a bad page load.`);
+//         }
+
 //         // ---- Who still needs the "you've been added to the watch list" email? ----
-//         // Works for the very first run AND for any recipient added to MHE_WATCH_RECIPIENTS later.
 //         const alreadyNotified = opts.resendWelcome
 //             ? new Set()
 //             : new Set(((previous && previous.notifiedRecipients) || []).map(r => String(r).toLowerCase()));
@@ -3813,18 +4036,23 @@ app.listen(PORT, () => {
 //             : [];
 //         const notifiedNow = Array.from(new Set([...alreadyNotified, ...newRecipients.map(r => r.toLowerCase())]));
 
+//         // Currently overdue + not submitted (used for the "due date passed" notifications)
+//         const currentPassed = mhePassedItems(list, now);
+//         const currentPassedKeys = currentPassed.map(p => p.passKey);
+
 //         // 1) Save the baseline IMMEDIATELY (never depends on email working)
 //         if (!previous) {
 //             await MheSnapshot.findOneAndUpdate(
 //                 { key: MHE_WATCH_SNAPSHOT_KEY },
-//                 { key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, notifiedRecipients: [], updatedAt: new Date() },
+//                 {
+//                     key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, notifiedRecipients: [],
+//                     passedNotified: currentPassedKeys, passedInit: true, updatedAt: new Date()
+//                 },
 //                 { upsert: true, returnDocument: 'after' }
 //             );
 //             await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff: null, emailSent: false, kind: 'baseline' })
 //                 .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
 //             console.log(`[MHE-Watch] Baseline saved to MongoDB (${list.length} assignments).`);
-//         } else {
-//             await MheSnapshot.updateOne({ key: MHE_WATCH_SNAPSHOT_KEY }, { updatedAt: new Date() });
 //         }
 
 //         // 2) Welcome mail (with the current status). If it fails we remember that and retry on the next run.
@@ -3843,30 +4071,54 @@ app.listen(PORT, () => {
 //             }
 //         }
 
-//         // First run, or nothing changed -> done
-//         if (!previous || previous.hash === newHash) {
-//             if (previous) console.log(`[MHE-Watch] No change (${list.length} assignments).`);
+//         // First run -> baseline is already saved, done
+//         if (!previous) {
 //             if (mailError) throw mailError;
 //             markSuccess();
 //             return 'ok';
 //         }
 
-//         // 3) Changed -> build diff, send mail FIRST, only then save the new snapshot (so a failed mail is retried).
+//         // ---- What is new since the last successful run? ----
+//         // Old snapshots (saved before this feature existed) silently seed the "already passed" list once, so you
+//         // are not flooded with mails for deadlines that passed days ago.
+//         const seeding = !previous.passedInit;
+//         const alreadyPassed = new Set(seeding ? currentPassedKeys : (previous.passedNotified || []));
+//         const nowPassed = currentPassed.filter(p => !alreadyPassed.has(p.passKey)).map(p => p.item);
+//         const dataChanged = previous.hash !== newHash;
+
+//         // Nothing to report
+//         if (!dataChanged && nowPassed.length === 0) {
+//             console.log(`[MHE-Watch] No change (${list.length} assignments).`);
+//             await MheSnapshot.updateOne(
+//                 { key: MHE_WATCH_SNAPSHOT_KEY },
+//                 { updatedAt: new Date(), passedNotified: currentPassedKeys, passedInit: true }
+//             );
+//             if (mailError) throw mailError;
+//             markSuccess();
+//             return 'ok';
+//         }
+
+//         // 3) Something changed -> build diff, send mail FIRST, only then save the new snapshot (so a failed mail is retried).
 //         //    Freshly welcomed recipients already received the up-to-date list, so they are skipped here.
 //         const diff = mheComputeDiff(previous.data, list);
+//         diff.nowPassed = nowPassed;
 //         const changeRecipients = MHE_WATCH_RECIPIENTS.filter(r => !newRecipients.includes(r));
+//         let changeMailSent = false;
 //         if (changeRecipients.length) {
 //             const mail = mheBuildChangeEmail(diff, list);
-//             await sendMheMail(mail.subject, mail.html, mail.text, changeRecipients);
-//             console.log(`[MHE-Watch] Change detected, email sent to ${changeRecipients.join(', ')}`);
+//             if (mail.total > 0) {
+//                 await sendMheMail(mail.subject, mail.html, mail.text, changeRecipients);
+//                 changeMailSent = true;
+//                 console.log(`[MHE-Watch] Change detected (${mail.subject}), email sent to ${changeRecipients.join(', ')}`);
+//             }
 //         }
 
 //         await MheSnapshot.findOneAndUpdate(
 //             { key: MHE_WATCH_SNAPSHOT_KEY },
-//             { hash: newHash, data: list, updatedAt: new Date() },
+//             { hash: newHash, data: list, passedNotified: currentPassedKeys, passedInit: true, updatedAt: new Date() },
 //             { upsert: true, returnDocument: 'after' }
 //         );
-//         await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff, emailSent: changeRecipients.length > 0, kind: 'change' })
+//         await MheStateHistory.create({ key: MHE_WATCH_SNAPSHOT_KEY, hash: newHash, data: list, diff, emailSent: changeMailSent, kind: 'change' })
 //             .catch(e => console.error('[MHE-Watch] History save failed:', e.message));
 
 //         if (mailError) throw mailError;
@@ -3915,7 +4167,7 @@ app.listen(PORT, () => {
 //     return outcome;
 // }
 
-// // --- Self-rescheduling loop: never overlaps. 1 hr after a good run, sooner after a busy/failed run ---
+// // --- Self-rescheduling loop: never overlaps. Normal interval after a good run, sooner after a busy/failed run ---
 // const runMheWatcherDaemon = async () => {
 //     let nextDelay = MHE_WATCH_INTERVAL_MS;
 //     try {
@@ -3940,7 +4192,7 @@ app.listen(PORT, () => {
 //         console.log('[MHE-Watch] Not started: set MHE_WATCH_USERNAME, MHE_WATCH_PASSWORD and MHE_WATCH_SECTION_ID env vars.');
 //         return;
 //     }
-//     console.log(`[MHE-Watch] Enabled. Mail provider: ${mheMailProviderName()}. First run in ${MHE_WATCH_INITIAL_DELAY_MS / 1000}s, then every ${MHE_WATCH_INTERVAL_MS / 60000} min. Recipients: ${MHE_WATCH_RECIPIENTS.join(', ')}`);
+//     console.log(`[MHE-Watch] Enabled. Mail provider: ${mheMailProviderName()}. First run in ${MHE_WATCH_INITIAL_DELAY_MS / 1000}s, then every ${MHE_WATCH_INTERVAL_MIN} min. Recipients: ${MHE_WATCH_RECIPIENTS.join(', ')}`);
 //     mheWatchStatus.nextRunAt = new Date(Date.now() + MHE_WATCH_INITIAL_DELAY_MS).toISOString();
 
 //     // Check the mail setup right now so a bad config shows up in the logs immediately
@@ -3973,12 +4225,14 @@ app.listen(PORT, () => {
 //     if (!mheAdminAuthorized(req, res)) return;
 //     try {
 //         const snap = await MheSnapshot.findOne({ key: MHE_WATCH_SNAPSHOT_KEY }).select('-__v');
+//         const now = Date.now();
 //         res.json({
 //             success: true,
 //             enabled: MHE_WATCH_ENABLED,
 //             mailProvider: mheMailProviderName(),
 //             recipients: MHE_WATCH_RECIPIENTS,
 //             sectionId: MHE_WATCH_SECTION_ID,
+//             intervalMinutes: MHE_WATCH_INTERVAL_MIN,
 //             consecutiveFailures: mheWatchConsecutiveFailures,
 //             scrapeBusy: mheScrapeBusy,
 //             status: mheWatchStatus,
@@ -3986,7 +4240,7 @@ app.listen(PORT, () => {
 //                 updatedAt: snap.updatedAt,
 //                 assignments: Array.isArray(snap.data) ? snap.data.length : 0,
 //                 notifiedRecipients: snap.notifiedRecipients,
-//                 data: snap.data
+//                 data: Array.isArray(snap.data) ? snap.data.map(i => mheEnrich(i, now)) : []
 //             } : null
 //         });
 //     } catch (error) {
@@ -4952,12 +5206,13 @@ app.listen(PORT, () => {
 //     // Starts the safe background parsing loop
 //     runBackgroundDaemon();
 
-//     // NEW: Starts the hourly McGraw Hill assignment watcher (emails on change)
+//     // Starts the McGraw Hill assignment watcher (emails on change / due date passed)
 //     startMheWatcher();
     
 //     // Keeps the instance alive
 //     setInterval(pingServer, PING_INTERVAL_MS);
 // });
+
 
 
 
